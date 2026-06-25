@@ -604,7 +604,7 @@ function Leads({ showToast }) {
 
                 {validRows.length>0&&(
                   <div style={{display:"flex",gap:10}}>
-                    <button className="btn btn-sm btn-green" disabled={uploading} onClick={uploadLeads}>{uploading?"Uploading...`":"✓ Upload ${validRows.length} Valid Leads"}</button>
+                    <button className="btn btn-sm btn-green" disabled={uploading} onClick={uploadLeads}>{uploading ? "Uploading..." : `✓ Upload ${validRows.length} Valid Leads`}</button>
                     <button className="btn btn-sm btn-ghost" onClick={()=>{setValidRows([]);setRejectedRows([]);setDndConflicts([]);fileRef.current.value="";selectedFile.current=null;}}>Cancel</button>
                   </div>
                 )}
@@ -1173,3 +1173,19 @@ export default function App() {
               </div>
             ))}
           </nav>
+         </div>
+        <div className="main">
+          {page==="dashboard"&&<Dashboard showToast={showToast}/>}
+          {page==="campaigns"&&<Campaigns showToast={showToast}/>}
+          {page==="leads"&&<Leads showToast={showToast}/>}
+          {page==="interested"&&<InterestedCandidates showToast={showToast}/>}
+          {page==="dnd"&&<DndList showToast={showToast}/>}
+          {page==="callerids"&&<CallerIds showToast={showToast}/>}
+          {page==="audio"&&<AudioManager showToast={showToast}/>}
+          {page==="logs"&&<CallLogs showToast={showToast}/>}
+        </div>
+      </div>
+      {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+    </>
+  );
+}
