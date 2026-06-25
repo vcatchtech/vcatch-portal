@@ -4,8 +4,38 @@ const SUPABASE_URL = "https://hndzvwkqveqjzaqegwmp.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhuZHp2d2txdmVxanphcWVnd21wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDc2MTksImV4cCI6MjA5Nzc4MzYxOX0.fajgDAY9JjM9jtG1BYkPqzB04hI8D96bJ0Hv5MZrIQ0";
 const RENDER_URL = "https://vcatch-ivr-server.onrender.com";
 
-async function supaFetch(path, options = {}) {
+async function refreshSession() {
+  try {
+    const session = JSON.parse(localStorage.getItem("sb_session") || "null");
+    if (!session?.refresh_token) return null;
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+      body: JSON.stringify({ refresh_token: session.refresh_token }),
+    });
+    if (!res.ok) { localStorage.removeItem("sb_session"); return null; }
+    const data = await res.json();
+    localStorage.setItem("sb_session", JSON.stringify(data));
+    return data;
+  } catch { return null; }
+}
+
+async function getValidSession() {
   const session = JSON.parse(localStorage.getItem("sb_session") || "null");
+  if (!session) return null;
+  if (!session.expires_at || Date.now() / 1000 >= session.expires_at - 60) {
+    return await refreshSession();
+  }
+  return session;
+}
+
+async function supaFetch(path, options = {}) {
+  let session = await getValidSession();
+  if (!session && !path.includes("/auth/v1/token")) {
+    localStorage.removeItem("sb_session");
+    window.location.reload();
+    return;
+  }
   const headers = {
     "Content-Type": "application/json",
     apikey: SUPABASE_ANON_KEY,
