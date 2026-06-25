@@ -459,24 +459,29 @@ function Leads({ showToast }) {
   const [rejectedRows,setRejectedRows]=useState([]);
   const [dndConflicts,setDndConflicts]=useState([]);
   const [campaign,setCampaign]=useState("");
-  const [maxRetries,setMaxRetries]=useState(1);
-  const [retryAfter,setRetryAfter]=useState(30);
+  const [selectedCampaignData,setSelectedCampaignData]=useState(null);
   const [filterCampaign,setFilterCampaign]=useState("ALL");
   const [filterStatus,setFilterStatus]=useState("ALL");
   const [campaigns,setCampaigns]=useState([]);
   const fileRef=useRef();
   const selectedFile=useRef(null);
 
-  useEffect(()=>{loadLeads();},[]);
+  useEffect(()=>{loadLeads();loadCampaignsList();},[]);
 
   async function loadLeads(){
     setLoading(true);
     try{
       const data=await dbSelect("leads","?select=*&order=uploaded_at.desc&limit=500");
       setLeads(data);
-      setCampaigns([...new Set(data.map(l=>l.campaign).filter(Boolean))]);
     }catch(e){showToast("Failed to load leads","error");}
     finally{setLoading(false);}
+  }
+
+  async function loadCampaignsList(){
+    try{
+      const data=await dbSelect("campaigns","?select=name,max_retries,retry_after_minutes&order=created_at.desc");
+      setCampaigns(data);
+    }catch(e){}
   }
 
   function parseCSV(text){
@@ -532,20 +537,23 @@ function Leads({ showToast }) {
   }
 
   async function uploadLeads(){
-    if(!campaign.trim()){showToast("Enter a campaign name first","error");return;}
+    if(!campaign){showToast("Select a campaign first","error");return;}
     if(!validRows.length){showToast("No valid leads to upload","error");return;}
     setUploading(true);
     try{
-      const payload=validRows.map(r=>({name:r.name,phone:r.phone,campaign:campaign.trim(),status:"PENDING",max_retries:maxRetries,retry_after_minutes:retryAfter}));
+      const maxRetries=selectedCampaignData?.max_retries||1;
+      const retryAfter=selectedCampaignData?.retry_after_minutes||30;
+      const payload=validRows.map(r=>({name:r.name,phone:r.phone,campaign:campaign,status:"PENDING",max_retries:maxRetries,retry_after_minutes:retryAfter}));
       await dbInsert("leads",payload);
       showToast(`${payload.length} leads uploaded to "${campaign}"`,"success");
-      setValidRows([]);setRejectedRows([]);setDndConflicts([]);setCampaign("");
+      setValidRows([]);setRejectedRows([]);setDndConflicts([]);setCampaign("");setSelectedCampaignData(null);
       fileRef.current.value="";selectedFile.current=null;
       loadLeads();
     }catch(e){showToast("Upload failed — check for duplicates","error");}
     finally{setUploading(false);}
   }
 
+  const campaignNames=[...new Set(leads.map(l=>l.campaign).filter(Boolean))];
   const filtered=leads.filter(l=>{
     const cMatch=filterCampaign==="ALL"||l.campaign===filterCampaign;
     const sMatch=filterStatus==="ALL"||l.status===filterStatus;
@@ -563,16 +571,25 @@ function Leads({ showToast }) {
           <div className="card-header"><div className="card-title">Upload Leads CSV</div></div>
           <div className="card-body">
             <div className="two-col" style={{marginBottom:16}}>
-              <div className="field"><label>Campaign Name *</label><input placeholder="e.g. Malayalam Hiring June" value={campaign} onChange={e=>setCampaign(e.target.value)}/></div>
-              <div></div>
-            </div>
-            <div className="two-col" style={{marginBottom:16}}>
-              <div className="field"><label>Max Retries</label><input type="number" min="1" max="10" value={maxRetries} onChange={e=>setMaxRetries(parseInt(e.target.value))}/></div>
               <div className="field">
-                <label>Retry After (minutes)</label>
-                <input type="number" min="1" value={retryAfter} onChange={e=>setRetryAfter(parseInt(e.target.value))}/>
-                {retryAfter<30&&<div className="warn">⚠️ Recommended: at least 30 minutes</div>}
+                <label>Select Campaign *</label>
+                <select value={campaign} onChange={e=>{
+                  setCampaign(e.target.value);
+                  const c=campaigns.find(x=>x.name===e.target.value);
+                  setSelectedCampaignData(c||null);
+                }}>
+                  <option value="">— Select a campaign —</option>
+                  {campaigns.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+                </select>
+                {campaigns.length===0&&<div className="warn">⚠️ No campaigns yet — create one in the Campaigns page first</div>}
               </div>
+              {selectedCampaignData&&(
+                <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:12,fontSize:13}}>
+                  <div style={{color:T.muted,fontSize:11,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.5px"}}>Campaign Settings</div>
+                  <div>Max Retries: <strong>{selectedCampaignData.max_retries}</strong></div>
+                  <div style={{marginTop:4}}>Retry After: <strong>{selectedCampaignData.retry_after_minutes} min</strong></div>
+                </div>
+              )}
             </div>
             <div className={`drop-zone ${dragOver?"drag-over":""}`}
               onClick={()=>fileRef.current.click()}
@@ -635,7 +652,7 @@ function Leads({ showToast }) {
                 {validRows.length>0&&(
                   <div style={{display:"flex",gap:10}}>
                     <button className="btn btn-sm btn-green" disabled={uploading} onClick={uploadLeads}>{uploading ? "Uploading..." : `✓ Upload ${validRows.length} Valid Leads`}</button>
-                    <button className="btn btn-sm btn-ghost" onClick={()=>{setValidRows([]);setRejectedRows([]);setDndConflicts([]);fileRef.current.value="";selectedFile.current=null;}}>Cancel</button>
+                    <button className="btn btn-sm btn-ghost" onClick={()=>{setValidRows([]);setRejectedRows([]);setDndConflicts([]);fileRef.current.value="";selectedFile.current=null;setCampaign("");setSelectedCampaignData(null);}}>Cancel</button>
                   </div>
                 )}
               </div>
@@ -649,7 +666,7 @@ function Leads({ showToast }) {
             <div className="filter-row" style={{margin:0}}>
               <select className="filter-select" value={filterCampaign} onChange={e=>setFilterCampaign(e.target.value)}>
                 <option value="ALL">All Campaigns</option>
-                {campaigns.map(c=><option key={c} value={c}>{c}</option>)}
+                {campaignNames.map(c=><option key={c} value={c}>{c}</option>)}
               </select>
               <select className="filter-select" value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
                 <option value="ALL">All Status</option>
