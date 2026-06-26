@@ -49,8 +49,11 @@ async function supaFetch(path, options = {}) {
 }
 
 async function renderFetch(path, options = {}) {
-  const res = await fetch(`${RENDER_URL}${path}`, { headers: { "Content-Type": "application/json" }, ...options });
-  return res.json();
+  try {
+    const res = await fetch(`${RENDER_URL}${path}`, { headers: { "Content-Type": "application/json" }, ...options });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Request failed"); }
+    return res.json();
+  } catch(e) { throw e; }
 }
 
 async function signIn(email, password) {
@@ -273,7 +276,7 @@ function Dashboard({ showToast }) {
   }
 
   async function loadDialerStatus(){
-    try{const s=await renderFetch("/campaign-status");setDialerStatus(s);}
+    try{const s=await renderFetch("/campaign/status");setDialerStatus(s);}
     catch(e){}
   }
 
@@ -289,7 +292,7 @@ function Dashboard({ showToast }) {
   }
 
   const connRate=stats?.total?Math.round(((stats.total-stats.notConnected)/stats.total)*100):0;
-  const isActive=dialerStatus?.is_active;
+  const isActive=dialerStatus?.dialer?.is_active;
 
   return(
     <div>
@@ -307,10 +310,21 @@ function Dashboard({ showToast }) {
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
           <div className="card">
-            <div className="card-header"><div className="card-title"><span className={`live-dot ${isActive?"":"inactive"}`}></span>{isActive?"Dialer Active":"Dialer Idle"}</div></div>
+            <div className="card-header">
+              <div className="card-title"><span className={`live-dot ${isActive?"":"inactive"}`}></span>{isActive?"Dialer Active":"Dialer Idle"}</div>
+              {isActive&&<span style={{fontSize:12,color:T.green,fontWeight:600}}>LIVE</span>}
+            </div>
             <div className="card-body">
-              {isActive?<div><div style={{fontSize:13,color:T.muted,marginBottom:8}}>Running campaign:</div><span className="tag">{dialerStatus?.campaign||"Unknown"}</span></div>
-              :<div style={{fontSize:13,color:T.muted}}>No campaign running. Start one from the Campaigns page.</div>}
+              {isActive?(
+                <div>
+                  <div style={{fontSize:12,color:T.muted,marginBottom:6}}>Campaign</div>
+                  <div style={{fontWeight:600,marginBottom:12}}>{dialerStatus?.dialer?.current_campaign||"—"}</div>
+                  <div style={{fontSize:12,color:T.muted,marginBottom:6}}>Currently calling</div>
+                  <div style={{fontFamily:"monospace",fontSize:14,color:T.accent}}>{dialerStatus?.dialer?.current_phone||"—"}</div>
+                </div>
+              ):(
+                <div style={{fontSize:13,color:T.muted}}>No campaign running. Go to Campaigns → ▶ Start.</div>
+              )}
             </div>
           </div>
           <div className="card">
@@ -355,85 +369,167 @@ function Dashboard({ showToast }) {
 // ================================================
 function Campaigns({ showToast }) {
   const [campaigns,setCampaigns]=useState([]);
-  const [showCreate,setShowCreate]=useState(false);
   const [callerIds,setCallerIds]=useState([]);
+  const [showCreate,setShowCreate]=useState(false);
+  const [deleteTarget,setDeleteTarget]=useState(null);
+  const [actionLoading,setActionLoading]=useState(null);
   const [form,setForm]=useState({name:"",description:"",caller_id:"",max_retries:1,retry_after_minutes:30});
-  const [starting,setStarting]=useState(null);
 
-  useEffect(()=>{loadCampaigns();loadCallerIds();},[]);
+  useEffect(()=>{load();loadCallerIds();const i=setInterval(load,5000);return()=>clearInterval(i);},[]);
 
-  async function loadCampaigns(){
+  async function load(){
     try{const d=await dbSelect("campaigns","?select=*&order=created_at.desc");setCampaigns(d);}
-    catch(e){showToast("Failed to load campaigns","error");}
+    catch(e){}
   }
   async function loadCallerIds(){
     try{const d=await dbSelect("caller_ids","?select=*&is_active=eq.true");setCallerIds(d);}catch(e){}
   }
+
   async function createCampaign(){
     if(!form.name.trim()){showToast("Campaign name required","error");return;}
     try{
-      await dbInsert("campaigns",{...form,status:"PENDING"});
+      await dbInsert("campaigns",{...form,status:"PENDING",total_leads:0,called_count:0,pending_count:0});
       showToast("Campaign created!","success");
-      setShowCreate(false);setForm({name:"",description:"",caller_id:"",max_retries:1,retry_after_minutes:30});
-      loadCampaigns();
-    }catch(e){showToast("Failed to create campaign","error");}
+      setShowCreate(false);
+      setForm({name:"",description:"",caller_id:"",max_retries:1,retry_after_minutes:30});
+      load();
+    }catch(e){showToast("Failed to create — name may already exist","error");}
   }
+
   async function startCampaign(name){
-    setStarting(name);
+    setActionLoading(name+"_start");
     try{
-      const res=await renderFetch("/start-campaign",{method:"POST",body:JSON.stringify({campaign:name})});
-      if(res.error)throw new Error(res.error);
-      showToast(`Campaign "${name}" started!`,"success");loadCampaigns();
+      await renderFetch("/campaign/start",{method:"POST",body:JSON.stringify({campaign:name})});
+      showToast(`▶ "${name}" started`,"success");load();
     }catch(e){showToast(e.message||"Failed to start","error");}
-    finally{setStarting(null);}
+    finally{setActionLoading(null);}
   }
+
+  async function pauseCampaign(name){
+    setActionLoading(name+"_pause");
+    try{
+      await renderFetch("/campaign/pause",{method:"POST",body:JSON.stringify({campaign:name})});
+      showToast(`⏸ "${name}" pausing after current call...`,"info");load();
+    }catch(e){showToast(e.message||"Failed to pause","error");}
+    finally{setActionLoading(null);}
+  }
+
+  async function confirmDelete(){
+    if(!deleteTarget)return;
+    setActionLoading(deleteTarget+"_delete");
+    try{
+      await renderFetch("/campaign/delete",{method:"DELETE",body:JSON.stringify({campaign:deleteTarget})});
+      showToast(`🗑 "${deleteTarget}" deleted`,"success");
+      setDeleteTarget(null);load();
+    }catch(e){showToast(e.message||"Failed to delete","error");}
+    finally{setActionLoading(null);}
+  }
+
+  const hasRunning=campaigns.some(c=>c.status==="RUNNING");
+
+  const statusColor={PENDING:T.muted,RUNNING:T.green,PAUSED:T.amber,COMPLETED:T.accent};
+  const statusIcon={PENDING:"⏳",RUNNING:"▶",PAUSED:"⏸",COMPLETED:"✓"};
 
   return(
     <div>
       <div className="page-header">
-        <div><div className="page-title">Campaigns</div><div className="page-sub">Create and manage calling campaigns</div></div>
+        <div><div className="page-title">Campaigns</div><div className="page-sub">Only one campaign can run at a time</div></div>
         <button className="btn btn-sm" onClick={()=>setShowCreate(true)}>+ New Campaign</button>
       </div>
       <div className="page-content">
+        {hasRunning&&<div style={{background:T.greenDim,border:`1px solid ${T.green}`,borderRadius:8,padding:"10px 16px",marginBottom:16,fontSize:13,color:T.green,display:"flex",alignItems:"center",gap:8}}><span className="live-dot"></span>A campaign is currently running. Pause it before starting another.</div>}
         <div className="card">
           <div className="table-wrap">
-            {campaigns.length===0?<div className="empty-state"><div className="empty-state-icon">📋</div><div className="empty-state-text">No campaigns yet</div></div>:(
+            {campaigns.length===0?(
+              <div className="empty-state"><div className="empty-state-icon">🎯</div><div className="empty-state-text">No campaigns yet</div><div className="empty-state-sub">Create one to get started</div></div>
+            ):(
               <table>
-                <thead><tr><th>Name</th><th>Status</th><th>Caller ID</th><th>Max Retries</th><th>Retry After</th><th>Action</th></tr></thead>
-                <tbody>{campaigns.map(c=>(
-                  <tr key={c.id}>
-                    <td><div style={{fontWeight:500}}>{c.name}</div><div style={{fontSize:12,color:T.muted}}>{c.description}</div></td>
-                    <td><DisposBadge sub={c.status}/></td>
-                    <td style={{fontFamily:"monospace",fontSize:12}}>{c.caller_id||"—"}</td>
-                    <td>{c.max_retries}</td>
-                    <td>{c.retry_after_minutes} min</td>
-                    <td>{c.status!=="RUNNING"?<button className="btn btn-sm btn-green" onClick={()=>startCampaign(c.name)} disabled={starting===c.name}>{starting===c.name?"Starting...":"▶ Start"}</button>:<span style={{fontSize:12,color:T.green}}><span className="live-dot"></span>Running</span>}</td>
-                  </tr>
-                ))}</tbody>
+                <thead><tr><th>Campaign</th><th>Status</th><th>Progress</th><th>Retries</th><th>Actions</th></tr></thead>
+                <tbody>{campaigns.map(c=>{
+                  const isRunning=c.status==="RUNNING";
+                  const isPaused=c.status==="PAUSED";
+                  const isPending=c.status==="PENDING";
+                  const isCompleted=c.status==="COMPLETED";
+                  const total=c.total_leads||0;
+                  const called=c.called_count||0;
+                  const pct=total?Math.round((called/total)*100):0;
+                  return(
+                    <tr key={c.id}>
+                      <td>
+                        <div style={{fontWeight:600}}>{c.name}</div>
+                        {c.description&&<div style={{fontSize:12,color:T.muted}}>{c.description}</div>}
+                        {c.caller_id&&<div style={{fontSize:11,color:T.muted,fontFamily:"monospace"}}>{c.caller_id}</div>}
+                      </td>
+                      <td>
+                        <span style={{color:statusColor[c.status]||T.muted,fontWeight:600,fontSize:13}}>
+                          {statusIcon[c.status]} {c.status}
+                        </span>
+                        {isRunning&&<span className="live-dot" style={{marginLeft:6}}></span>}
+                      </td>
+                      <td style={{minWidth:140}}>
+                        <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{called} / {total} called ({pct}%)</div>
+                        <div className="progress-bar"><div className="progress-fill" style={{width:`${pct}%`}}/></div>
+                      </td>
+                      <td style={{fontSize:12}}>
+                        <div>Max: {c.max_retries}x</div>
+                        <div style={{color:T.muted}}>After: {c.retry_after_minutes}min</div>
+                      </td>
+                      <td>
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          {(isPending||isPaused)&&(
+                            <button className="btn btn-sm btn-green"
+                              disabled={hasRunning||actionLoading===c.name+"_start"}
+                              onClick={()=>startCampaign(c.name)}
+                              title={hasRunning&&!isRunning?"Pause running campaign first":""}>
+                              {actionLoading===c.name+"_start"?"...":"▶ Start"}
+                            </button>
+                          )}
+                          {isRunning&&(
+                            <button className="btn btn-sm btn-amber"
+                              disabled={actionLoading===c.name+"_pause"}
+                              onClick={()=>pauseCampaign(c.name)}>
+                              {actionLoading===c.name+"_pause"?"...":"⏸ Pause"}
+                            </button>
+                          )}
+                          {!isRunning&&(
+                            <button className="btn btn-sm btn-danger"
+                              disabled={actionLoading===c.name+"_delete"}
+                              onClick={()=>setDeleteTarget(c.name)}>
+                              🗑
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}</tbody>
               </table>
             )}
           </div>
         </div>
       </div>
+
       {showCreate&&(
         <div className="modal-overlay" onClick={()=>setShowCreate(false)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
             <div className="modal-title">New Campaign</div>
-            <div className="modal-sub">Configure your outbound calling campaign</div>
+            <div className="modal-sub">Set retry logic here — leads will inherit these settings</div>
             <div className="field"><label>Campaign Name *</label><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Malayalam Hiring June"/></div>
-            <div className="field"><label>Description</label><input value={form.description} onChange={e=>setForm({...form,description:e.target.value})} placeholder="Optional"/></div>
+            <div className="field"><label>Description (optional)</label><input value={form.description} onChange={e=>setForm({...form,description:e.target.value})} placeholder="Brief description"/></div>
             <div className="field"><label>Caller ID</label>
               <select value={form.caller_id} onChange={e=>setForm({...form,caller_id:e.target.value})}>
-                <option value="">Use default</option>
+                <option value="">Use default active number</option>
                 {callerIds.map(c=><option key={c.id} value={c.number}>{c.label} ({c.number})</option>)}
               </select>
             </div>
             <div className="two-col">
-              <div className="field"><label>Max Retries</label><input type="number" min="1" max="10" value={form.max_retries} onChange={e=>setForm({...form,max_retries:parseInt(e.target.value)})}/></div>
+              <div className="field"><label>Max Retries</label>
+                <input type="number" min="1" max="10" value={form.max_retries} onChange={e=>setForm({...form,max_retries:parseInt(e.target.value)||1})}/>
+              </div>
               <div className="field">
                 <label>Retry After (minutes)</label>
-                <input type="number" min="1" value={form.retry_after_minutes} onChange={e=>setForm({...form,retry_after_minutes:parseInt(e.target.value)})}/>
-                {form.retry_after_minutes<30&&<div className="warn">⚠️ Recommended: at least 30 minutes</div>}
+                <input type="number" min="1" value={form.retry_after_minutes} onChange={e=>setForm({...form,retry_after_minutes:parseInt(e.target.value)||30})}/>
+                {form.retry_after_minutes<30&&<div className="warn">⚠️ Recommended: at least 30 min</div>}
               </div>
             </div>
             <div className="modal-actions">
@@ -443,11 +539,29 @@ function Campaigns({ showToast }) {
           </div>
         </div>
       )}
+
+      {deleteTarget&&(
+        <div className="modal-overlay" onClick={()=>setDeleteTarget(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div className="modal-title">🗑 Delete Campaign</div>
+            <div className="modal-sub">This will permanently delete <strong>"{deleteTarget}"</strong> and all its PENDING leads. Called leads and logs are kept.</div>
+            <div style={{background:T.redDim,border:`1px solid ${T.red}`,borderRadius:8,padding:12,fontSize:13,color:T.red,marginBottom:16}}>
+              ⚠️ This cannot be undone. Pending leads will not be dialed.
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-sm btn-ghost" onClick={()=>setDeleteTarget(null)}>Cancel</button>
+              <button className="btn btn-sm btn-danger" onClick={confirmDelete} disabled={actionLoading===deleteTarget+"_delete"}>
+                {actionLoading===deleteTarget+"_delete"?"Deleting...":"Yes, Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ================================================
+
 // LEADS — with validation
 // ================================================
 function Leads({ showToast }) {
