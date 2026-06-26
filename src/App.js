@@ -59,14 +59,31 @@ async function renderFetch(path, options = {}) {
 async function signIn(email, password) {
   const data = await supaFetch("/auth/v1/token?grant_type=password", { method: "POST", body: JSON.stringify({ email, password }) });
   localStorage.setItem("sb_session", JSON.stringify(data));
+  // Fetch and cache role
+  try {
+    const roleData = await supaFetch(`/rest/v1/user_roles?email=eq.${encodeURIComponent(email)}&select=role,name&limit=1`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${data.access_token}` }
+    });
+    const userRole = roleData?.[0] || { role: "HR", name: email };
+    localStorage.setItem("sb_role", JSON.stringify(userRole));
+  } catch(e) {
+    localStorage.setItem("sb_role", JSON.stringify({ role: "HR", name: email }));
+  }
   return data;
 }
 async function signOut() {
   const s = JSON.parse(localStorage.getItem("sb_session") || "null");
-  if (s?.access_token) await supaFetch("/auth/v1/logout", { method: "POST", headers: { Authorization: `Bearer ${s.access_token}` } });
+  if (s?.access_token) {
+    try { await supaFetch("/auth/v1/logout", { method: "POST", headers: { Authorization: `Bearer ${s.access_token}` } }); } catch(e) {}
+  }
   localStorage.removeItem("sb_session");
+  localStorage.removeItem("sb_role");
 }
 function getEmail() { try { return JSON.parse(localStorage.getItem("sb_session"))?.user?.email || ""; } catch { return ""; } }
+function getRole() { try { return JSON.parse(localStorage.getItem("sb_role"))?.role || "HR"; } catch { return "HR"; } }
+function getRoleName() { try { return JSON.parse(localStorage.getItem("sb_role"))?.name || getEmail(); } catch { return getEmail(); } }
+function isAdmin() { return getRole() === "ADMIN"; }
+function isManager() { return ["ADMIN","MANAGER"].includes(getRole()); }
 async function dbSelect(table, params = "") { return supaFetch(`/rest/v1/${table}${params}`, { headers: { Prefer: "return=representation" } }); }
 async function dbInsert(table, body) { return supaFetch(`/rest/v1/${table}`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) }); }
 async function dbUpdate(table, match, body) { return supaFetch(`/rest/v1/${table}?${match}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) }); }
@@ -246,21 +263,27 @@ function LoginPage({ onLogin }) {
 // ================================================
 // DASHBOARD
 // ================================================
-function Dashboard({ showToast }) {
+function Dashboard({ showToast, role }) {
   const [stats,setStats]=useState(null);
   const [dialerStatus,setDialerStatus]=useState(null);
   const [recentLogs,setRecentLogs]=useState([]);
   const [testPhone,setTestPhone]=useState("");
   const [testLoading,setTestLoading]=useState(false);
+  const [dateFrom,setDateFrom]=useState("");
+  const [dateTo,setDateTo]=useState("");
 
   useEffect(()=>{loadAll();const i=setInterval(loadDialerStatus,5000);return()=>clearInterval(i);},[]);
+  useEffect(()=>{loadStats();},[dateFrom,dateTo]);
 
   async function loadAll(){await Promise.all([loadStats(),loadDialerStatus()]);}
 
   async function loadStats(){
     try{
+      let params="?select=sub_disposition,logged_at&order=logged_at.desc&limit=5000";
+      if(dateFrom) params+=`&logged_at=gte.${dateFrom}T00:00:00`;
+      if(dateTo) params+=`&logged_at=lte.${dateTo}T23:59:59`;
       const [logs,leads]=await Promise.all([
-        dbSelect("call_logs","?select=sub_disposition"),
+        dbSelect("call_logs",params),
         dbSelect("leads","?select=status"),
       ]);
       setStats({
@@ -268,9 +291,11 @@ function Dashboard({ showToast }) {
         interested:logs.filter(l=>l.sub_disposition==="INTERESTED").length,
         notConnected:logs.filter(l=>["BUSY","FAILED"].includes(l.sub_disposition)).length,
         pending:leads.filter(l=>l.status==="PENDING").length,
-        retry:leads.filter(l=>l.status==="RETRY").length,
       });
-      const recent=await dbSelect("call_logs","?select=phone,campaign,main_disposition,sub_disposition,logged_at&order=logged_at.desc&limit=10");
+      let recentParams="?select=phone,campaign,main_disposition,sub_disposition,logged_at&order=logged_at.desc&limit=10";
+      if(dateFrom) recentParams+=`&logged_at=gte.${dateFrom}T00:00:00`;
+      if(dateTo) recentParams+=`&logged_at=lte.${dateTo}T23:59:59`;
+      const recent=await dbSelect("call_logs",recentParams);
       setRecentLogs(recent);
     }catch(e){console.error(e);}
   }
@@ -293,50 +318,55 @@ function Dashboard({ showToast }) {
 
   const connRate=stats?.total?Math.round(((stats.total-stats.notConnected)/stats.total)*100):0;
   const isActive=dialerStatus?.dialer?.is_active;
+  const currentPhone=dialerStatus?.dialer?.current_phone;
+  const currentCampaign=dialerStatus?.dialer?.current_campaign;
+  const canControl=["ADMIN","MANAGER"].includes(role);
 
   return(
     <div>
       <div className="page-header">
         <div><div className="page-title">Dashboard</div><div className="page-sub">Live overview of your IVR campaigns</div></div>
-        <button className="btn btn-sm btn-ghost" onClick={loadAll}>↻ Refresh</button>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <input type="date" className="filter-input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} title="From date"/>
+          <input type="date" className="filter-input" value={dateTo} onChange={e=>setDateTo(e.target.value)} title="To date"/>
+          {(dateFrom||dateTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setDateFrom("");setDateTo("");}}>✕</button>}
+          <button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button>
+        </div>
       </div>
       <div className="page-content">
         <div className="stats-grid">
-          <div className="stat-card"><div className="stat-label">Total Calls</div><div className="stat-value blue">{stats?.total??"—"}</div><div className="stat-sub">All time</div></div>
+          <div className="stat-card"><div className="stat-label">Total Calls</div><div className="stat-value blue">{stats?.total??"—"}</div><div className="stat-sub">{dateFrom||dateTo?"Filtered":"All time"}</div></div>
           <div className="stat-card"><div className="stat-label">Interested</div><div className="stat-value green">{stats?.interested??"—"}</div><div className="stat-sub">{stats?.total?`${Math.round((stats.interested/stats.total)*100)}% rate`:""}</div></div>
           <div className="stat-card"><div className="stat-label">Not Connected</div><div className="stat-value red">{stats?.notConnected??"—"}</div><div className="stat-sub">Busy + Failed</div></div>
-          <div className="stat-card"><div className="stat-label">Pending + Retry</div><div className="stat-value amber">{(stats?.pending??0)+(stats?.retry??0)}</div><div className="stat-sub">Awaiting call</div></div>
+          <div className="stat-card"><div className="stat-label">Pending Leads</div><div className="stat-value amber">{stats?.pending??0}</div><div className="stat-sub">Awaiting call</div></div>
         </div>
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
-          <div className="card">
-            <div className="card-header">
-              <div className="card-title"><span className={`live-dot ${isActive?"":"inactive"}`}></span>{isActive?"Dialer Active":"Dialer Idle"}</div>
-              {isActive&&<span style={{fontSize:12,color:T.green,fontWeight:600}}>LIVE</span>}
-            </div>
-            <div className="card-body">
-              {isActive?(
-                <div>
-                  <div style={{fontSize:12,color:T.muted,marginBottom:6}}>Campaign</div>
-                  <div style={{fontWeight:600,marginBottom:12}}>{dialerStatus?.dialer?.current_campaign||"—"}</div>
-                  <div style={{fontSize:12,color:T.muted,marginBottom:6}}>Currently calling</div>
-                  <div style={{fontFamily:"monospace",fontSize:14,color:T.accent}}>{dialerStatus?.dialer?.current_phone||"—"}</div>
-                </div>
-              ):(
-                <div style={{fontSize:13,color:T.muted}}>No campaign running. Go to Campaigns → ▶ Start.</div>
-              )}
-            </div>
-          </div>
-          <div className="card">
-            <div className="card-header"><div className="card-title">🧪 Test Call</div></div>
-            <div className="card-body">
-              <div style={{fontSize:13,color:T.muted,marginBottom:12}}>Send a test call to any number to verify audio.</div>
-              <div className="input-row">
-                <div className="field"><label>Phone Number</label><input value={testPhone} onChange={e=>setTestPhone(e.target.value)} placeholder="9876543210" onKeyDown={e=>e.key==="Enter"&&sendTestCall()}/></div>
-                <button className="btn btn-sm btn-amber" onClick={sendTestCall} disabled={testLoading}>{testLoading?"Calling...":"📞 Call"}</button>
+          {/* Dialer Status — compact */}
+          <div style={{background:T.card,border:`1px solid ${isActive?T.green:T.border}`,borderRadius:12,padding:"14px 18px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <span className={`live-dot ${isActive?"":"inactive"}`}></span>
+              <div>
+                <div style={{fontSize:13,fontWeight:600,color:isActive?T.green:T.muted}}>{isActive?"Dialer Active":"Dialer Idle"}</div>
+                {isActive&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>
+                  {currentCampaign&&<span className="tag" style={{marginRight:6}}>{currentCampaign}</span>}
+                  {currentPhone&&<span style={{fontFamily:"monospace",color:T.accent}}>→ {currentPhone}</span>}
+                </div>}
               </div>
             </div>
+            {!isActive&&<span style={{fontSize:11,color:T.muted}}>Start from Campaigns</span>}
           </div>
+
+          {/* Test Call */}
+          {canControl&&<div className="card" style={{marginBottom:0}}>
+            <div className="card-header" style={{padding:"12px 16px"}}><div className="card-title" style={{fontSize:13}}>🧪 Test Call</div></div>
+            <div className="card-body" style={{padding:"12px 16px"}}>
+              <div className="input-row">
+                <div className="field" style={{marginBottom:0}}><input value={testPhone} onChange={e=>setTestPhone(e.target.value)} placeholder="9876543210" onKeyDown={e=>e.key==="Enter"&&sendTestCall()}/></div>
+                <button className="btn btn-sm btn-amber" onClick={sendTestCall} disabled={testLoading}>{testLoading?"...":"📞"}</button>
+              </div>
+            </div>
+          </div>}
         </div>
 
         {stats&&<div className="card" style={{marginBottom:20}}><div className="card-header"><div className="card-title">Connection Rate</div><span style={{fontSize:13,color:T.accent,fontWeight:600}}>{connRate}%</span></div><div className="card-body"><div className="progress-bar"><div className="progress-fill" style={{width:`${connRate}%`}}/></div></div></div>}
@@ -582,10 +612,12 @@ function Leads({ showToast }) {
 
   useEffect(()=>{loadLeads();loadCampaignsList();},[]);
 
-  async function loadLeads(){
+  async function loadLeads(camp=filterCampaign){
     setLoading(true);
     try{
-      const data=await dbSelect("leads","?select=*&order=uploaded_at.desc&limit=500");
+      let params="?select=*&order=uploaded_at.desc&limit=500";
+      if(camp&&camp!=="ALL") params+=`&campaign=eq.${encodeURIComponent(camp)}`;
+      const data=await dbSelect("leads",params);
       setLeads(data);
     }catch(e){showToast("Failed to load leads","error");}
     finally{setLoading(false);}
@@ -593,7 +625,7 @@ function Leads({ showToast }) {
 
   async function loadCampaignsList(){
     try{
-      const data=await dbSelect("campaigns","?select=name,max_retries,retry_after_minutes&order=created_at.desc");
+      const data=await dbSelect("campaigns","?select=name,max_retries,retry_after_minutes,status&order=created_at.desc");
       setCampaigns(data);
     }catch(e){}
   }
@@ -667,7 +699,6 @@ function Leads({ showToast }) {
     finally{setUploading(false);}
   }
 
-  const campaignNames=[...new Set(leads.map(l=>l.campaign).filter(Boolean))];
   const filtered=leads.filter(l=>{
     const cMatch=filterCampaign==="ALL"||l.campaign===filterCampaign;
     const sMatch=filterStatus==="ALL"||l.status===filterStatus;
@@ -778,9 +809,9 @@ function Leads({ showToast }) {
           <div className="card-header">
             <div className="card-title">All Leads ({filtered.length})</div>
             <div className="filter-row" style={{margin:0}}>
-              <select className="filter-select" value={filterCampaign} onChange={e=>setFilterCampaign(e.target.value)}>
+              <select className="filter-select" value={filterCampaign} onChange={e=>{setFilterCampaign(e.target.value);loadLeads(e.target.value);}}>
                 <option value="ALL">All Campaigns</option>
-                {campaignNames.map(c=><option key={c} value={c}>{c}</option>)}
+                {campaigns.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
               </select>
               <select className="filter-select" value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
                 <option value="ALL">All Status</option>
@@ -1300,26 +1331,170 @@ function CallLogs({ showToast }) {
 // ================================================
 // MAIN APP
 // ================================================
+// ================================================
+// USER MANAGEMENT (Admin only)
+// ================================================
+function UserManagement({ showToast }) {
+  const [users,setUsers]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [form,setForm]=useState({email:"",role:"HR",name:""});
+  const [adding,setAdding]=useState(false);
+
+  useEffect(()=>{load();},[]);
+
+  async function load(){
+    setLoading(true);
+    try{const d=await dbSelect("user_roles","?select=*&order=created_at.desc");setUsers(d);}
+    catch(e){showToast("Failed to load users","error");}
+    finally{setLoading(false);}
+  }
+
+  async function addUser(){
+    if(!form.email.trim()){showToast("Email required","error");return;}
+    setAdding(true);
+    try{
+      await dbInsert("user_roles",{email:form.email.trim().toLowerCase(),role:form.role,name:form.name||form.email});
+      showToast(`${form.email} added as ${form.role}`,"success");
+      setForm({email:"",role:"HR",name:""});load();
+    }catch(e){showToast("Failed — email may already exist","error");}
+    finally{setAdding(false);}
+  }
+
+  async function updateRole(id,role){
+    try{await dbUpdate("user_roles",`id=eq.${id}`,{role});showToast("Role updated","success");load();}
+    catch(e){showToast("Failed","error");}
+  }
+
+  async function toggleActive(id,current){
+    try{await dbUpdate("user_roles",`id=eq.${id}`,{is_active:!current});load();}
+    catch(e){showToast("Failed","error");}
+  }
+
+  const roleColors={ADMIN:T.red,MANAGER:T.accent,HR:T.green};
+
+  return(
+    <div>
+      <div className="page-header">
+        <div><div className="page-title">User Management</div><div className="page-sub">Manage portal access and roles</div></div>
+      </div>
+      <div className="page-content">
+        <div className="card">
+          <div className="card-header"><div className="card-title">Add User</div></div>
+          <div className="card-body">
+            <div className="three-col" style={{marginBottom:12}}>
+              <div className="field"><label>Email *</label><input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="hr@company.com"/></div>
+              <div className="field"><label>Name</label><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Full name"/></div>
+              <div className="field"><label>Role</label>
+                <select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>
+                  <option value="HR">HR</option>
+                  <option value="MANAGER">HR Manager</option>
+                  <option value="ADMIN">Admin</option>
+                </select>
+              </div>
+            </div>
+            <div style={{background:T.amberDim,border:`1px solid ${T.amber}`,borderRadius:6,padding:"8px 12px",fontSize:12,color:T.amber,marginBottom:12}}>
+              ⚠️ After adding, invite via <strong>Supabase → Authentication → Users → Invite user</strong> so they can set a password.
+            </div>
+            <button className="btn btn-sm" onClick={addUser} disabled={adding}>{adding?"Adding...":"Add User"}</button>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-header"><div className="card-title">All Users ({users.length})</div><button className="btn btn-sm btn-ghost" onClick={load}>↻</button></div>
+          <div className="table-wrap">
+            {loading?<div className="empty-state">Loading...</div>:users.length===0?<div className="empty-state"><div className="empty-state-icon">👤</div><div className="empty-state-text">No users</div></div>:(
+              <table>
+                <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody>{users.map(u=>(
+                  <tr key={u.id}>
+                    <td style={{fontWeight:500}}>{u.name||"—"}</td>
+                    <td style={{fontFamily:"monospace",fontSize:12}}>{u.email}</td>
+                    <td><span className="badge" style={{background:`${roleColors[u.role]||T.muted}22`,color:roleColors[u.role]||T.muted}}>{u.role}</span></td>
+                    <td><span className={`badge ${u.is_active?"badge-green":"badge-gray"}`}>{u.is_active?"Active":"Inactive"}</span></td>
+                    <td style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {u.email!==getEmail()?(
+                        <>
+                          <select className="filter-select" value={u.role} onChange={e=>updateRole(u.id,e.target.value)} style={{padding:"4px 8px",fontSize:12}}>
+                            <option value="HR">HR</option>
+                            <option value="MANAGER">Manager</option>
+                            <option value="ADMIN">Admin</option>
+                          </select>
+                          <button className="btn btn-sm btn-ghost" onClick={()=>toggleActive(u.id,u.is_active)}>{u.is_active?"Deactivate":"Activate"}</button>
+                        </>
+                      ):<span style={{fontSize:12,color:T.muted}}>You</span>}
+                    </td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            )}
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-header"><div className="card-title">Role Permissions</div></div>
+          <div className="card-body">
+            <table>
+              <thead><tr><th>Feature</th><th style={{color:T.red}}>Admin</th><th style={{color:T.accent}}>Manager</th><th style={{color:T.green}}>HR</th></tr></thead>
+              <tbody>{[
+                ["Dashboard & Logs","✓","✓","✓"],
+                ["Upload Leads","✓","✓","✓"],
+                ["Candidate Updates","✓","✓","✓"],
+                ["Start/Pause Campaigns","✓","✓","✗"],
+                ["Create/Delete Campaigns","✓","✓","✗"],
+                ["Audio Manager","✓","✓","✗"],
+                ["Caller IDs & DND","✓","✓","✗"],
+                ["User Management","✓","✗","✗"],
+              ].map(([f,a,m,h])=>(
+                <tr key={f}>
+                  <td>{f}</td>
+                  <td style={{color:a==="✓"?T.green:T.red,fontWeight:700,textAlign:"center"}}>{a}</td>
+                  <td style={{color:m==="✓"?T.green:T.red,fontWeight:700,textAlign:"center"}}>{m}</td>
+                  <td style={{color:h==="✓"?T.green:T.red,fontWeight:700,textAlign:"center"}}>{h}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [session,setSession]=useState(()=>{try{return JSON.parse(localStorage.getItem("sb_session"));}catch{return null;}});
   const [page,setPage]=useState("dashboard");
   const [toast,setToast]=useState(null);
+  const [role,setRole]=useState(()=>getRole());
 
   function showToast(msg,type="info"){setToast({msg,type});}
-  async function handleLogout(){await signOut();setSession(null);}
 
-  if(!session)return<><style>{css}</style><LoginPage onLogin={setSession}/></>;
+  async function handleLogin(s){
+    setSession(s);
+    // Small delay to ensure role is cached
+    setTimeout(()=>setRole(getRole()),100);
+  }
 
-  const nav=[
-    {id:"dashboard",label:"Dashboard",icon:"📊"},
-    {id:"campaigns",label:"Campaigns",icon:"🎯"},
-    {id:"leads",label:"Leads",icon:"👥"},
-    {id:"interested",label:"Candidates",icon:"⭐"},
-    {id:"dnd",label:"DND List",icon:"🚫"},
-    {id:"callerids",label:"Caller IDs",icon:"📱"},
-    {id:"audio",label:"Audio Manager",icon:"🔊"},
-    {id:"logs",label:"Call Logs",icon:"📋"},
+  async function handleLogout(){
+    await signOut();
+    setSession(null);
+    setRole("HR");
+  }
+
+  if(!session)return<><style>{css}</style><LoginPage onLogin={handleLogin}/></>;
+
+  const allNav=[
+    {id:"dashboard",label:"Dashboard",icon:"📊",roles:["ADMIN","MANAGER","HR"]},
+    {id:"campaigns",label:"Campaigns",icon:"🎯",roles:["ADMIN","MANAGER"]},
+    {id:"leads",label:"Leads",icon:"👥",roles:["ADMIN","MANAGER","HR"]},
+    {id:"interested",label:"Candidates",icon:"⭐",roles:["ADMIN","MANAGER","HR"]},
+    {id:"dnd",label:"DND List",icon:"🚫",roles:["ADMIN","MANAGER"]},
+    {id:"callerids",label:"Caller IDs",icon:"📱",roles:["ADMIN","MANAGER"]},
+    {id:"audio",label:"Audio Manager",icon:"🔊",roles:["ADMIN","MANAGER"]},
+    {id:"logs",label:"Call Logs",icon:"📋",roles:["ADMIN","MANAGER","HR"]},
+    {id:"users",label:"Users",icon:"👤",roles:["ADMIN"]},
   ];
+
+  const nav=allNav.filter(n=>n.roles.includes(role));
+  const roleColor={ADMIN:T.red,MANAGER:T.accent,HR:T.green};
+  const roleLabel={ADMIN:"Admin",MANAGER:"HR Manager",HR:"HR"};
 
   return(
     <>
@@ -1334,16 +1509,23 @@ export default function App() {
               </div>
             ))}
           </nav>
-         </div>
+          <div className="sidebar-footer">
+            <div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{getRoleName()}</div>
+            <div style={{fontSize:11,color:T.muted,marginBottom:6,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{session?.user?.email}</div>
+            <span className="badge" style={{background:`${roleColor[role]||T.muted}22`,color:roleColor[role]||T.muted,fontSize:10,marginBottom:10,display:"inline-block"}}>{roleLabel[role]||role}</span>
+            <button className="btn btn-sm btn-ghost" style={{width:"100%",marginTop:8}} onClick={handleLogout}>Sign out</button>
+          </div>
+        </div>
         <div className="main">
-          {page==="dashboard"&&<Dashboard showToast={showToast}/>}
-          {page==="campaigns"&&<Campaigns showToast={showToast}/>}
+          {page==="dashboard"&&<Dashboard showToast={showToast} role={role}/>}
+          {page==="campaigns"&&["ADMIN","MANAGER"].includes(role)&&<Campaigns showToast={showToast}/>}
           {page==="leads"&&<Leads showToast={showToast}/>}
           {page==="interested"&&<InterestedCandidates showToast={showToast}/>}
-          {page==="dnd"&&<DndList showToast={showToast}/>}
-          {page==="callerids"&&<CallerIds showToast={showToast}/>}
-          {page==="audio"&&<AudioManager showToast={showToast}/>}
+          {page==="dnd"&&["ADMIN","MANAGER"].includes(role)&&<DndList showToast={showToast}/>}
+          {page==="callerids"&&["ADMIN","MANAGER"].includes(role)&&<CallerIds showToast={showToast}/>}
+          {page==="audio"&&["ADMIN","MANAGER"].includes(role)&&<AudioManager showToast={showToast}/>}
           {page==="logs"&&<CallLogs showToast={showToast}/>}
+          {page==="users"&&role==="ADMIN"&&<UserManagement showToast={showToast}/>}
         </div>
       </div>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
