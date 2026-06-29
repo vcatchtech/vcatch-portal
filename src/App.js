@@ -1,9 +1,149 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 const SUPABASE_URL = "https://hndzvwkqveqjzaqegwmp.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhuZHp2d2txdmVxanphcWVnd21wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDc2MTksImV4cCI6MjA5Nzc4MzYxOX0.fajgDAY9JjM9jtG1BYkPqzB04hI8D96bJ0Hv5MZrIQ0";
 const RENDER_URL = "https://vcatch-ivr-server.onrender.com";
 
+// ================================================
+// THEME TOKENS
+// ================================================
+const DARK = {
+  bg:"#0D0F14", surface:"#151820", card:"#1C2030", border:"#252A3A",
+  accent:"#4F8EF7", accentDim:"#1E2E4A", green:"#34D399", greenDim:"#0D2E22",
+  red:"#F87171", redDim:"#2E1515", amber:"#FBBF24", amberDim:"#2E2210",
+  purple:"#A78BFA", purpleDim:"#1E1535", text:"#E8ECF4", muted:"#6B7594",
+  inputBg:"#151820", shadow:"rgba(0,0,0,0.4)", mode:"dark",
+};
+const LIGHT = {
+  bg:"#F4F6FA", surface:"#FFFFFF", card:"#FFFFFF", border:"#E2E8F0",
+  accent:"#3B7AF8", accentDim:"#EBF2FF", green:"#10B981", greenDim:"#ECFDF5",
+  red:"#EF4444", redDim:"#FEF2F2", amber:"#F59E0B", amberDim:"#FFFBEB",
+  purple:"#8B5CF6", purpleDim:"#F5F3FF", text:"#1A202C", muted:"#718096",
+  inputBg:"#F7FAFC", shadow:"rgba(0,0,0,0.08)", mode:"light",
+};
+
+let T = DARK;
+
+function getThemeCSS(t) {
+return `
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:${t.bg};color:${t.text};font-family:'Inter',system-ui,sans-serif;transition:background 0.2s,color 0.2s;}
+  ::-webkit-scrollbar{width:6px;}::-webkit-scrollbar-track{background:${t.surface};}::-webkit-scrollbar-thumb{background:${t.border};border-radius:3px;}
+  .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:${t.bg};}
+  .login-box{background:${t.card};border:1px solid ${t.border};border-radius:16px;padding:40px;width:400px;box-shadow:0 4px 24px ${t.shadow};}
+  .login-logo{font-size:24px;font-weight:700;color:${t.accent};margin-bottom:4px;}
+  .login-sub{color:${t.muted};font-size:13px;margin-bottom:32px;}
+  .field{margin-bottom:16px;}
+  .field label{display:block;font-size:12px;font-weight:600;color:${t.muted};margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;}
+  .field input,.field select,.field textarea{width:100%;background:${t.inputBg};border:1.5px solid ${t.border};border-radius:8px;padding:10px 14px;color:${t.text};font-size:14px;outline:none;transition:border 0.15s;font-family:'Inter',sans-serif;}
+  .field input:focus,.field select:focus,.field textarea:focus{border-color:${t.accent};box-shadow:0 0 0 3px ${t.accentDim};}
+  .btn{padding:10px 18px;background:${t.accent};color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.15s;font-family:'Inter',sans-serif;display:inline-flex;align-items:center;gap:6px;}
+  .btn:hover{opacity:0.88;transform:translateY(-1px);}
+  .btn:active{transform:translateY(0);}
+  .btn:disabled{opacity:0.5;cursor:not-allowed;transform:none;}
+  .btn-sm{padding:6px 14px;font-size:13px;border-radius:6px;}
+  .btn-ghost{background:transparent;border:1.5px solid ${t.border};color:${t.text};}
+  .btn-ghost:hover{background:${t.surface};opacity:1;}
+  .btn-danger{background:${t.red};color:#fff;}
+  .btn-green{background:${t.green};color:#fff;}
+  .btn-amber{background:${t.amber};color:#fff;}
+  .btn-purple{background:${t.purple};color:#fff;}
+  .btn-full{width:100%;justify-content:center;}
+  .err{color:${t.red};font-size:13px;margin-top:10px;text-align:center;}
+  .warn{color:${t.amber};font-size:12px;margin-top:6px;display:flex;align-items:center;gap:6px;}
+  .app{display:flex;height:100vh;overflow:hidden;}
+  .sidebar{width:230px;background:${t.surface};border-right:1.5px solid ${t.border};display:flex;flex-direction:column;flex-shrink:0;box-shadow:${t.mode==="light"?"2px 0 8px rgba(0,0,0,0.04)":"none"};}
+  .sidebar-header{padding:20px;border-bottom:1px solid ${t.border};}
+  .sidebar-brand{font-size:20px;font-weight:700;color:${t.accent};letter-spacing:-0.5px;}
+  .sidebar-tagline{font-size:11px;color:${t.muted};margin-top:2px;}
+  .nav{flex:1;padding:12px 0;overflow-y:auto;}
+  .nav-section{font-size:10px;font-weight:600;color:${t.muted};text-transform:uppercase;letter-spacing:1px;padding:8px 20px 4px;}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:9px 20px;font-size:13px;font-weight:500;color:${t.muted};cursor:pointer;transition:all 0.12s;border-radius:0;margin:1px 8px;border-radius:8px;}
+  .nav-item:hover{color:${t.text};background:${t.bg};}
+  .nav-item.active{color:${t.accent};background:${t.accentDim};font-weight:600;}
+  .nav-icon{font-size:15px;width:18px;text-align:center;flex-shrink:0;}
+  .sidebar-footer{padding:16px;border-top:1px solid ${t.border};}
+  .user-card{background:${t.bg};border-radius:10px;padding:12px;margin-bottom:10px;}
+  .user-name{font-size:13px;font-weight:600;color:${t.text};margin-bottom:2px;}
+  .user-email{font-size:11px;color:${t.muted};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .main{flex:1;overflow-y:auto;background:${t.bg};}
+  .page-header{padding:24px 28px 20px;border-bottom:1.5px solid ${t.border};background:${t.surface};display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;position:sticky;top:0;z-index:10;}
+  .page-title{font-size:20px;font-weight:700;color:${t.text};}
+  .page-sub{font-size:13px;color:${t.muted};margin-top:2px;}
+  .page-content{padding:24px 28px;}
+  .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px;}
+  .kpi-card{background:${t.card};border:1.5px solid ${t.border};border-radius:12px;padding:20px;box-shadow:0 1px 4px ${t.shadow};}
+  .kpi-label{font-size:11px;font-weight:600;color:${t.muted};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;}
+  .kpi-value{font-size:32px;font-weight:700;line-height:1;margin-bottom:4px;}
+  .kpi-sub{font-size:12px;color:${t.muted};}
+  .card{background:${t.card};border:1.5px solid ${t.border};border-radius:12px;overflow:hidden;margin-bottom:20px;box-shadow:0 1px 4px ${t.shadow};}
+  .card-header{padding:14px 20px;border-bottom:1px solid ${t.border};display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;background:${t.card};}
+  .card-title{font-size:14px;font-weight:600;color:${t.text};}
+  .card-body{padding:20px;}
+  .table-wrap{overflow-x:auto;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;padding:10px 16px;color:${t.muted};font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1.5px solid ${t.border};background:${t.bg};}
+  td{padding:12px 16px;border-bottom:1px solid ${t.border};color:${t.text};vertical-align:middle;}
+  tr:last-child td{border-bottom:none;}
+  tbody tr:hover td{background:${t.bg};}
+  .badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;}
+  .badge-green{background:${t.greenDim};color:${t.green};}
+  .badge-red{background:${t.redDim};color:${t.red};}
+  .badge-amber{background:${t.amberDim};color:${t.amber};}
+  .badge-blue{background:${t.accentDim};color:${t.accent};}
+  .badge-gray{background:${t.border};color:${t.muted};}
+  .badge-purple{background:${t.purpleDim};color:${t.purple};}
+  .drop-zone{border:2px dashed ${t.border};border-radius:12px;padding:40px 32px;text-align:center;cursor:pointer;transition:all 0.2s;background:${t.bg};}
+  .drop-zone:hover,.drop-zone.drag-over{border-color:${t.accent};background:${t.accentDim};}
+  .drop-zone-icon{font-size:32px;margin-bottom:10px;}
+  .drop-zone-text{font-size:15px;font-weight:600;color:${t.text};margin-bottom:4px;}
+  .drop-zone-sub{font-size:13px;color:${t.muted};}
+  .audio-row{display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid ${t.border};}
+  .audio-row:last-child{border-bottom:none;}
+  .filter-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .filter-select,.filter-input{background:${t.inputBg};border:1.5px solid ${t.border};border-radius:7px;padding:7px 12px;color:${t.text};font-size:13px;outline:none;font-family:'Inter',sans-serif;}
+  .filter-select:focus,.filter-input:focus{border-color:${t.accent};}
+  .empty-state{text-align:center;padding:48px;color:${t.muted};}
+  .empty-icon{font-size:40px;margin-bottom:12px;}
+  .empty-title{font-size:15px;font-weight:600;color:${t.text};margin-bottom:6px;}
+  .empty-sub{font-size:13px;}
+  .toast{position:fixed;bottom:24px;right:24px;background:${t.card};border:1.5px solid ${t.border};border-radius:12px;padding:14px 18px;font-size:13px;z-index:999;display:flex;align-items:center;gap:10px;box-shadow:0 8px 32px ${t.shadow};animation:slideUp 0.2s ease;max-width:360px;}
+  @keyframes slideUp{from{transform:translateY(20px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+  .progress-bar{height:6px;background:${t.border};border-radius:3px;overflow:hidden;}
+  .progress-fill{height:100%;background:${t.accent};border-radius:3px;transition:width 0.4s;}
+  .tag{display:inline-block;background:${t.accentDim};color:${t.accent};border-radius:5px;padding:2px 8px;font-size:11px;font-weight:600;}
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:100;backdrop-filter:blur(2px);}
+  .modal{background:${t.card};border:1.5px solid ${t.border};border-radius:16px;padding:28px;width:500px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px ${t.shadow};}
+  .modal-title{font-size:18px;font-weight:700;margin-bottom:4px;color:${t.text};}
+  .modal-sub{font-size:13px;color:${t.muted};margin-bottom:20px;}
+  .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:24px;}
+  .live-dot{width:8px;height:8px;border-radius:50%;background:${t.green};display:inline-block;animation:pulse 1.5s infinite;flex-shrink:0;}
+  .live-dot.off{background:${t.muted};animation:none;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}
+  .input-row{display:flex;gap:8px;align-items:flex-end;}
+  .input-row .field{flex:1;margin-bottom:0;}
+  .section-label{font-size:11px;font-weight:600;color:${t.muted};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;margin-top:16px;}
+  .info-box{border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:12px;}
+  .info-box.amber{background:${t.amberDim};border:1px solid ${t.amber};color:${t.amber};}
+  .info-box.green{background:${t.greenDim};border:1px solid ${t.green};color:${t.green};}
+  .info-box.red{background:${t.redDim};border:1px solid ${t.red};color:${t.red};}
+  .info-box.blue{background:${t.accentDim};border:1px solid ${t.accent};color:${t.accent};}
+  .theme-toggle{background:${t.bg};border:1.5px solid ${t.border};border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px;color:${t.muted};display:flex;align-items:center;gap:6px;}
+  .theme-toggle:hover{border-color:${t.accent};color:${t.accent};}
+  .stat-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid ${t.border};}
+  .stat-row:last-child{border-bottom:none;}
+  .reject-row{background:${t.redDim};border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:12px;display:flex;align-items:center;justify-content:space-between;}
+  .dialer-bar{background:${t.card};border:1.5px solid ${t.border};border-radius:12px;padding:14px 20px;display:flex;align-items:center;gap:16px;margin-bottom:20px;box-shadow:0 1px 4px ${t.shadow};}
+  .green{color:${t.green};} .red{color:${t.red};} .amber{color:${t.amber};} .blue{color:${t.accent};} .purple{color:${t.purple};}
+`;
+}
+
+// ================================================
+// API UTILITIES
+// ================================================
 async function refreshSession() {
   try {
     const session = JSON.parse(localStorage.getItem("sb_session") || "null");
@@ -33,6 +173,7 @@ async function supaFetch(path, options = {}) {
   let session = await getValidSession();
   if (!session && !path.includes("/auth/v1/token")) {
     localStorage.removeItem("sb_session");
+    localStorage.removeItem("sb_role");
     window.location.reload();
     return;
   }
@@ -49,212 +190,121 @@ async function supaFetch(path, options = {}) {
 }
 
 async function renderFetch(path, options = {}) {
-  try {
-    const res = await fetch(`${RENDER_URL}${path}`, { headers: { "Content-Type": "application/json" }, ...options });
-    if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Request failed"); }
-    return res.json();
-  } catch(e) { throw e; }
+  const res = await fetch(`${RENDER_URL}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || "Request failed");
+  return data;
 }
 
 async function signIn(email, password) {
-  const data = await supaFetch("/auth/v1/token?grant_type=password", { method: "POST", body: JSON.stringify({ email, password }) });
+  const data = await supaFetch("/auth/v1/token?grant_type=password", {
+    method: "POST", body: JSON.stringify({ email, password }),
+  });
   localStorage.setItem("sb_session", JSON.stringify(data));
-  // Fetch and cache role
   try {
     const roleData = await supaFetch(`/rest/v1/user_roles?email=eq.${encodeURIComponent(email)}&select=role,name&limit=1`, {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${data.access_token}` }
     });
-    const userRole = roleData?.[0] || { role: "HR", name: email };
-    localStorage.setItem("sb_role", JSON.stringify(userRole));
-  } catch(e) {
+    localStorage.setItem("sb_role", JSON.stringify(roleData?.[0] || { role: "HR", name: email }));
+  } catch {
     localStorage.setItem("sb_role", JSON.stringify({ role: "HR", name: email }));
   }
   return data;
 }
+
 async function signOut() {
   const s = JSON.parse(localStorage.getItem("sb_session") || "null");
   if (s?.access_token) {
-    try { await supaFetch("/auth/v1/logout", { method: "POST", headers: { Authorization: `Bearer ${s.access_token}` } }); } catch(e) {}
+    try { await supaFetch("/auth/v1/logout", { method: "POST", headers: { Authorization: `Bearer ${s.access_token}` } }); } catch {}
   }
   localStorage.removeItem("sb_session");
   localStorage.removeItem("sb_role");
 }
+
 function getEmail() { try { return JSON.parse(localStorage.getItem("sb_session"))?.user?.email || ""; } catch { return ""; } }
 function getRole() { try { return JSON.parse(localStorage.getItem("sb_role"))?.role || "HR"; } catch { return "HR"; } }
 function getRoleName() { try { return JSON.parse(localStorage.getItem("sb_role"))?.name || getEmail(); } catch { return getEmail(); } }
 function isAdmin() { return getRole() === "ADMIN"; }
 function isManager() { return ["ADMIN","MANAGER"].includes(getRole()); }
+
 async function dbSelect(table, params = "") { return supaFetch(`/rest/v1/${table}${params}`, { headers: { Prefer: "return=representation" } }); }
 async function dbInsert(table, body) { return supaFetch(`/rest/v1/${table}`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) }); }
 async function dbUpdate(table, match, body) { return supaFetch(`/rest/v1/${table}?${match}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) }); }
 async function dbDelete(table, match) { return supaFetch(`/rest/v1/${table}?${match}`, { method: "DELETE" }); }
 
-const T = {
-  bg:"#0D0F14",surface:"#151820",card:"#1C2030",border:"#252A3A",
-  accent:"#4F8EF7",accentDim:"#1E2E4A",green:"#34D399",greenDim:"#0D2E22",
-  red:"#F87171",redDim:"#2E1515",amber:"#FBBF24",amberDim:"#2E2210",
-  purple:"#A78BFA",purpleDim:"#1E1535",
-  text:"#E8ECF4",muted:"#6B7594",font:"'Inter',system-ui,sans-serif",
-};
+function downloadCSV(filename, headers, rows) {
+  const bom = "\uFEFF";
+  const csv = bom + [headers.join(","), ...rows.map(r => r.map(v => `"${(v??"")}"`).join(","))].join("\n");
+  const a = document.createElement("a");
+  a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+  a.download = filename; a.click();
+}
 
-const css = `
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-  *{box-sizing:border-box;margin:0;padding:0;}
-  body{background:${T.bg};color:${T.text};font-family:${T.font};}
-  ::-webkit-scrollbar{width:6px;}::-webkit-scrollbar-track{background:${T.surface};}::-webkit-scrollbar-thumb{background:${T.border};border-radius:3px;}
-  .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;}
-  .login-box{background:${T.card};border:1px solid ${T.border};border-radius:16px;padding:40px;width:380px;}
-  .login-logo{font-size:22px;font-weight:700;color:${T.accent};letter-spacing:-0.5px;margin-bottom:6px;}
-  .login-sub{color:${T.muted};font-size:13px;margin-bottom:32px;}
-  .field{margin-bottom:16px;}
-  .field label{display:block;font-size:12px;font-weight:500;color:${T.muted};margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;}
-  .field input,.field select,.field textarea{width:100%;background:${T.surface};border:1px solid ${T.border};border-radius:8px;padding:10px 14px;color:${T.text};font-size:14px;outline:none;transition:border 0.15s;font-family:${T.font};}
-  .field input:focus,.field select:focus,.field textarea:focus{border-color:${T.accent};}
-  .btn{padding:11px 20px;background:${T.accent};color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:opacity 0.15s;font-family:${T.font};}
-  .btn:hover{opacity:0.88;}.btn:disabled{opacity:0.5;cursor:not-allowed;}
-  .btn-sm{padding:7px 14px;font-size:13px;border-radius:6px;}
-  .btn-ghost{background:transparent;border:1px solid ${T.border};color:${T.text};}
-  .btn-ghost:hover{background:${T.border};opacity:1;}
-  .btn-danger{background:${T.red};color:#fff;}
-  .btn-green{background:${T.green};color:#0D1A14;}
-  .btn-amber{background:${T.amber};color:#1A1200;}
-  .btn-purple{background:${T.purple};color:#fff;}
-  .btn-full{width:100%;}
-  .err{color:${T.red};font-size:13px;margin-top:12px;text-align:center;}
-  .warn{color:${T.amber};font-size:12px;margin-top:6px;display:flex;align-items:center;gap:6px;}
-  .app{display:flex;height:100vh;overflow:hidden;}
-  .sidebar{width:220px;background:${T.surface};border-right:1px solid ${T.border};display:flex;flex-direction:column;padding:24px 0;flex-shrink:0;}
-  .sidebar-brand{padding:0 20px 24px;font-size:18px;font-weight:700;color:${T.accent};letter-spacing:-0.5px;border-bottom:1px solid ${T.border};}
-  .sidebar-brand span{font-size:11px;display:block;color:${T.muted};font-weight:400;margin-top:2px;letter-spacing:0;}
-  .nav{flex:1;padding-top:16px;}
-  .nav-item{display:flex;align-items:center;gap:10px;padding:10px 20px;font-size:14px;color:${T.muted};cursor:pointer;transition:all 0.12s;border-left:3px solid transparent;}
-  .nav-item:hover{color:${T.text};background:${T.card};}
-  .nav-item.active{color:${T.accent};background:${T.accentDim};border-left-color:${T.accent};}
-  .nav-icon{font-size:16px;width:20px;text-align:center;}
-  .sidebar-footer{padding:16px 20px;border-top:1px solid ${T.border};}
-  .user-info{font-size:12px;color:${T.muted};margin-bottom:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .main{flex:1;overflow-y:auto;background:${T.bg};}
-  .page-header{padding:28px 32px 20px;border-bottom:1px solid ${T.border};margin-bottom:28px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;}
-  .page-title{font-size:20px;font-weight:700;}
-  .page-sub{font-size:13px;color:${T.muted};margin-top:2px;}
-  .page-content{padding:0 32px 32px;}
-  .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px;}
-  .stats-grid-5{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-bottom:28px;}
-  .stat-card{background:${T.card};border:1px solid ${T.border};border-radius:12px;padding:20px;}
-  .stat-label{font-size:11px;color:${T.muted};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;}
-  .stat-value{font-size:28px;font-weight:700;line-height:1;}
-  .stat-sub{font-size:12px;color:${T.muted};margin-top:4px;}
-  .green{color:${T.green};}.red{color:${T.red};}.amber{color:${T.amber};}.blue{color:${T.accent};}.purple{color:${T.purple};}
-  .card{background:${T.card};border:1px solid ${T.border};border-radius:12px;overflow:hidden;margin-bottom:20px;}
-  .card-header{padding:16px 20px;border-bottom:1px solid ${T.border};display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
-  .card-title{font-size:14px;font-weight:600;}
-  .card-body{padding:20px;}
-  .table-wrap{overflow-x:auto;}
-  table{width:100%;border-collapse:collapse;font-size:13px;}
-  th{text-align:left;padding:10px 16px;color:${T.muted};font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid ${T.border};}
-  td{padding:12px 16px;border-bottom:1px solid ${T.border};color:${T.text};}
-  tr:last-child td{border-bottom:none;}tr:hover td{background:${T.surface};}
-  .badge{display:inline-block;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;}
-  .badge-green{background:${T.greenDim};color:${T.green};}
-  .badge-red{background:${T.redDim};color:${T.red};}
-  .badge-amber{background:${T.amberDim};color:${T.amber};}
-  .badge-blue{background:${T.accentDim};color:${T.accent};}
-  .badge-gray{background:${T.surface};color:${T.muted};}
-  .badge-purple{background:${T.purpleDim};color:${T.purple};}
-  .drop-zone{border:2px dashed ${T.border};border-radius:12px;padding:48px 32px;text-align:center;cursor:pointer;transition:all 0.2s;}
-  .drop-zone:hover,.drop-zone.drag-over{border-color:${T.accent};background:${T.accentDim};}
-  .drop-zone-icon{font-size:36px;margin-bottom:12px;}
-  .drop-zone-text{font-size:15px;font-weight:500;margin-bottom:6px;}
-  .drop-zone-sub{font-size:13px;color:${T.muted};}
-  .audio-row{display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid ${T.border};}
-  .audio-row:last-child{border-bottom:none;}
-  .audio-label{font-size:14px;font-weight:500;}.audio-key{font-size:11px;color:${T.muted};font-family:monospace;margin-top:2px;}
-  .audio-actions{display:flex;gap:8px;align-items:center;}
-  .filter-row{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;}
-  .filter-select{background:${T.surface};border:1px solid ${T.border};border-radius:7px;padding:7px 12px;color:${T.text};font-size:13px;outline:none;cursor:pointer;font-family:${T.font};}
-  .filter-select:focus{border-color:${T.accent};}
-  .filter-input{background:${T.surface};border:1px solid ${T.border};border-radius:7px;padding:7px 12px;color:${T.text};font-size:13px;outline:none;font-family:${T.font};}
-  .filter-input:focus{border-color:${T.accent};}
-  .empty-state{text-align:center;padding:48px;color:${T.muted};}
-  .empty-state-icon{font-size:36px;margin-bottom:12px;}
-  .empty-state-text{font-size:15px;font-weight:500;margin-bottom:6px;color:${T.text};}
-  .toast{position:fixed;bottom:24px;right:24px;background:${T.card};border:1px solid ${T.border};border-radius:10px;padding:14px 18px;font-size:13px;z-index:999;display:flex;align-items:center;gap:10px;box-shadow:0 8px 32px rgba(0,0,0,0.4);animation:slideUp 0.2s ease;}
-  @keyframes slideUp{from{transform:translateY(20px);opacity:0;}to{transform:translateY(0);opacity:1;}}
-  .progress-bar{height:4px;background:${T.border};border-radius:2px;overflow:hidden;margin-top:8px;}
-  .progress-fill{height:100%;background:${T.accent};border-radius:2px;transition:width 0.3s;}
-  .tag{display:inline-block;background:${T.accentDim};color:${T.accent};border-radius:4px;padding:2px 7px;font-size:11px;font-weight:500;margin-right:4px;}
-  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100;}
-  .modal{background:${T.card};border:1px solid ${T.border};border-radius:14px;padding:28px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto;}
-  .modal-title{font-size:16px;font-weight:700;margin-bottom:6px;}
-  .modal-sub{font-size:13px;color:${T.muted};margin-bottom:20px;}
-  .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px;}
-  .live-dot{width:8px;height:8px;border-radius:50%;background:${T.green};display:inline-block;margin-right:6px;animation:pulse 1.5s infinite;}
-  .live-dot.inactive{background:${T.muted};animation:none;}
-  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
-  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
-  .three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}
-  .input-row{display:flex;gap:8px;align-items:flex-end;}
-  .input-row .field{flex:1;margin-bottom:0;}
-  .reject-row{background:${T.redDim};border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:12px;display:flex;align-items:center;justify-content:space-between;}
-  .reject-reason{color:${T.red};font-size:11px;}
-  .valid-count{color:${T.green};font-size:13px;font-weight:600;}
-  .section-divider{border:none;border-top:1px solid ${T.border};margin:20px 0;}
-  .update-row{padding:12px 0;border-bottom:1px solid ${T.border};}
-  .update-row:last-child{border-bottom:none;}
-  .update-meta{font-size:11px;color:${T.muted};margin-top:4px;}
-  .update-comment{font-size:13px;color:${T.text};margin-top:4px;font-style:italic;}
-`;
-
+// ================================================
+// SHARED COMPONENTS
+// ================================================
 function Toast({ msg, type, onClose }) {
   useEffect(() => { const t = setTimeout(onClose, 3500); return () => clearTimeout(t); }, []);
-  const icon = type === "success" ? "✅" : type === "error" ? "❌" : "ℹ️";
-  return <div className="toast">{icon} {msg}</div>;
+  const icons = { success:"✅", error:"❌", info:"ℹ️", warn:"⚠️" };
+  return <div className="toast">{icons[type]||"ℹ️"} {msg}</div>;
 }
 
 function DisposBadge({ sub }) {
   const map = {
-    INTERESTED:["badge-green","Interested"],NOT_INTERESTED:["badge-red","Not Interested"],
-    NO_RESPONSE:["badge-amber","No Response"],INVALID_INPUT:["badge-amber","Invalid Input"],
-    BUSY:["badge-gray","Busy"],FAILED:["badge-gray","Failed"],
-    CALL_DISCONNECTED:["badge-blue","Disconnected"],PENDING:["badge-gray","Pending"],
-    CALLED:["badge-blue","Called"],RETRY:["badge-amber","Retry"],
-    PICKED_UP:["badge-green","Picked Up"],REJECTED:["badge-red","Rejected"],
-    HIRED:["badge-purple","Hired"],
+    INTERESTED:["badge-green","Interested"], NOT_INTERESTED:["badge-red","Not Interested"],
+    NO_RESPONSE:["badge-amber","No Response"], INVALID_INPUT:["badge-amber","Invalid Input"],
+    BUSY:["badge-gray","Busy"], FAILED:["badge-gray","Failed"],
+    CALL_DISCONNECTED:["badge-blue","Disconnected"], PENDING:["badge-gray","Pending"],
+    CALLED:["badge-blue","Called"], CALLED_FINAL:["badge-blue","Completed"],
+    RETRY:["badge-amber","Retry"], SKIPPED:["badge-gray","Skipped"],
+    PICKED_UP:["badge-green","Picked Up"], REJECTED:["badge-red","Rejected"],
+    HIRED:["badge-purple","Hired"], RUNNING:["badge-green","Running"],
+    PAUSED:["badge-amber","Paused"], COMPLETED:["badge-blue","Completed"],
   };
-  const [cls,label] = map[sub]||["badge-gray",sub||"—"];
+  const [cls,label] = map[sub]||["badge-gray", sub||"—"];
   return <span className={`badge ${cls}`}>{label}</span>;
 }
 
-function downloadCSV(filename, headers, rows) {
-  const bom = "\uFEFF";
-  const csv = bom + [headers.join(","), ...rows.map(r => r.map(v => `"${v??""}""`).join(","))].join("\n");
-  const a = document.createElement("a");
-  a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
-  a.download = filename;
-  a.click();
+function Modal({ title, sub, onClose, children, actions }) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        {title && <div className="modal-title">{title}</div>}
+        {sub && <div className="modal-sub">{sub}</div>}
+        {children}
+        {actions && <div className="modal-actions">{actions}</div>}
+      </div>
+    </div>
+  );
 }
 
 // ================================================
-// LOGIN
+// LOGIN PAGE
 // ================================================
-function LoginPage({ onLogin }) {
-  const [email,setEmail]=useState("");const [password,setPassword]=useState("");
-  const [loading,setLoading]=useState(false);const [error,setError]=useState("");
-  async function handleLogin(){
-    setLoading(true);setError("");
-    try{const s=await signIn(email,password);onLogin(s);}
-    catch(e){setError(e.message||"Login failed");}
-    finally{setLoading(false);}
+function LoginPage({ onLogin, theme }) {
+  const [email,setEmail]=useState(""); const [password,setPassword]=useState("");
+  const [loading,setLoading]=useState(false); const [error,setError]=useState("");
+  async function handleLogin() {
+    setLoading(true); setError("");
+    try { const s = await signIn(email, password); onLogin(s); }
+    catch(e) { setError(e.message||"Invalid email or password"); }
+    finally { setLoading(false); }
   }
-  return(
+  return (
     <div className="login-wrap">
       <div className="login-box">
-        <div className="login-logo">VCatch</div>
-        <div className="login-sub">HR Portal — Sign in to continue</div>
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div className="login-logo">🎯 VCatch</div>
+          <div className="login-sub">HR IVR Portal — Sign in to continue</div>
+        </div>
         <div className="field"><label>Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="hr@company.com" onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
         <div className="field"><label>Password</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
-        <button className="btn btn-full" onClick={handleLogin} disabled={loading}>{loading?"Signing in...":"Sign in"}</button>
+        <button className="btn btn-full" onClick={handleLogin} disabled={loading} style={{marginTop:8}}>{loading?"Signing in...":"Sign in"}</button>
         {error&&<div className="err">{error}</div>}
+        <div style={{textAlign:"center",marginTop:16,fontSize:12,color:T.muted}}>Forgot password? Contact your admin.</div>
       </div>
     </div>
   );
@@ -279,38 +329,29 @@ function Dashboard({ showToast, role }) {
 
   async function loadStats(){
     try{
-      let params="?select=sub_disposition,logged_at&order=logged_at.desc&limit=5000";
-      if(dateFrom) params+=`&logged_at=gte.${dateFrom}T00:00:00`;
-      if(dateTo) params+=`&logged_at=lte.${dateTo}T23:59:59`;
-      const [logs,leads]=await Promise.all([
-        dbSelect("call_logs",params),
-        dbSelect("leads","?select=status"),
-      ]);
+      let p="?select=sub_disposition,logged_at&limit=5000";
+      if(dateFrom) p+=`&logged_at=gte.${dateFrom}T00:00:00`;
+      if(dateTo) p+=`&logged_at=lte.${dateTo}T23:59:59`;
+      const [logs,leads]=await Promise.all([dbSelect("call_logs",p),dbSelect("leads","?select=status")]);
       setStats({
         total:logs.length,
         interested:logs.filter(l=>l.sub_disposition==="INTERESTED").length,
         notConnected:logs.filter(l=>["BUSY","FAILED"].includes(l.sub_disposition)).length,
-        pending:leads.filter(l=>l.status==="PENDING").length,
+        pending:leads.filter(l=>["PENDING","CALLED"].includes(l.status)).length,
       });
-      let recentParams="?select=phone,campaign,main_disposition,sub_disposition,logged_at&order=logged_at.desc&limit=10";
-      if(dateFrom) recentParams+=`&logged_at=gte.${dateFrom}T00:00:00`;
-      if(dateTo) recentParams+=`&logged_at=lte.${dateTo}T23:59:59`;
-      const recent=await dbSelect("call_logs",recentParams);
-      setRecentLogs(recent);
-    }catch(e){console.error(e);}
+      let rp="?select=phone,campaign,sub_disposition,logged_at&order=logged_at.desc&limit=8";
+      if(dateFrom) rp+=`&logged_at=gte.${dateFrom}T00:00:00`;
+      if(dateTo) rp+=`&logged_at=lte.${dateTo}T23:59:59`;
+      setRecentLogs(await dbSelect("call_logs",rp));
+    }catch(e){}
   }
-
-  async function loadDialerStatus(){
-    try{const s=await renderFetch("/campaign/status");setDialerStatus(s);}
-    catch(e){}
-  }
+  async function loadDialerStatus(){try{setDialerStatus(await renderFetch("/campaign/status"));}catch{}}
 
   async function sendTestCall(){
     if(!testPhone.trim()){showToast("Enter a phone number","error");return;}
     setTestLoading(true);
     try{
-      const res=await renderFetch("/test-call",{method:"POST",body:JSON.stringify({phone:testPhone.trim(),campaign:"TEST"})});
-      if(res.error)throw new Error(res.error);
+      await renderFetch("/test-call",{method:"POST",body:JSON.stringify({phone:testPhone.trim(),campaign:"TEST"})});
       showToast(`Test call sent to ${testPhone}`,"success");setTestPhone("");
     }catch(e){showToast(e.message||"Test call failed","error");}
     finally{setTestLoading(false);}
@@ -318,68 +359,70 @@ function Dashboard({ showToast, role }) {
 
   const connRate=stats?.total?Math.round(((stats.total-stats.notConnected)/stats.total)*100):0;
   const isActive=dialerStatus?.dialer?.is_active;
-  const currentPhone=dialerStatus?.dialer?.current_phone;
-  const currentCampaign=dialerStatus?.dialer?.current_campaign;
-  const canControl=["ADMIN","MANAGER"].includes(role);
+  const canControl=isManager();
 
   return(
     <div>
       <div className="page-header">
-        <div><div className="page-title">Dashboard</div><div className="page-sub">Live overview of your IVR campaigns</div></div>
+        <div><div className="page-title">Dashboard</div><div className="page-sub">Live overview — {dateFrom||dateTo?"filtered":"all time"}</div></div>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-          <input type="date" className="filter-input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} title="From date"/>
-          <input type="date" className="filter-input" value={dateTo} onChange={e=>setDateTo(e.target.value)} title="To date"/>
-          {(dateFrom||dateTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setDateFrom("");setDateTo("");}}>✕</button>}
+          <input type="date" className="filter-input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
+          <span style={{color:T.muted,fontSize:12}}>to</span>
+          <input type="date" className="filter-input" value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
+          {(dateFrom||dateTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setDateFrom("");setDateTo("");}}>✕ Clear</button>}
           <button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button>
         </div>
       </div>
       <div className="page-content">
-        <div className="stats-grid">
-          <div className="stat-card"><div className="stat-label">Total Calls</div><div className="stat-value blue">{stats?.total??"—"}</div><div className="stat-sub">{dateFrom||dateTo?"Filtered":"All time"}</div></div>
-          <div className="stat-card"><div className="stat-label">Interested</div><div className="stat-value green">{stats?.interested??"—"}</div><div className="stat-sub">{stats?.total?`${Math.round((stats.interested/stats.total)*100)}% rate`:""}</div></div>
-          <div className="stat-card"><div className="stat-label">Not Connected</div><div className="stat-value red">{stats?.notConnected??"—"}</div><div className="stat-sub">Busy + Failed</div></div>
-          <div className="stat-card"><div className="stat-label">Pending Leads</div><div className="stat-value amber">{stats?.pending??0}</div><div className="stat-sub">Awaiting call</div></div>
-        </div>
-
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
-          {/* Dialer Status — compact */}
-          <div style={{background:T.card,border:`1px solid ${isActive?T.green:T.border}`,borderRadius:12,padding:"14px 18px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span className={`live-dot ${isActive?"":"inactive"}`}></span>
-              <div>
-                <div style={{fontSize:13,fontWeight:600,color:isActive?T.green:T.muted}}>{isActive?"Dialer Active":"Dialer Idle"}</div>
-                {isActive&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>
-                  {currentCampaign&&<span className="tag" style={{marginRight:6}}>{currentCampaign}</span>}
-                  {currentPhone&&<span style={{fontFamily:"monospace",color:T.accent}}>→ {currentPhone}</span>}
-                </div>}
-              </div>
-            </div>
-            {!isActive&&<span style={{fontSize:11,color:T.muted}}>Start from Campaigns</span>}
+        {/* Dialer Status Bar */}
+        <div className="dialer-bar">
+          <span className={`live-dot ${isActive?"":"off"}`}></span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:600,color:isActive?T.green:T.muted}}>{isActive?"Dialer Active":"Dialer Idle"}</div>
+            {isActive&&<div style={{fontSize:12,color:T.muted,marginTop:2,display:"flex",alignItems:"center",gap:8}}>
+              <span className="tag">{dialerStatus?.dialer?.current_campaign||"—"}</span>
+              <span>→</span>
+              <span style={{fontFamily:"monospace",color:T.accent,fontWeight:600}}>{dialerStatus?.dialer?.current_phone||"—"}</span>
+            </div>}
+            {!isActive&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>No campaign running. Go to Campaigns → ▶ Start.</div>}
           </div>
-
-          {/* Test Call */}
-          {canControl&&<div className="card" style={{marginBottom:0}}>
-            <div className="card-header" style={{padding:"12px 16px"}}><div className="card-title" style={{fontSize:13}}>🧪 Test Call</div></div>
-            <div className="card-body" style={{padding:"12px 16px"}}>
-              <div className="input-row">
-                <div className="field" style={{marginBottom:0}}><input value={testPhone} onChange={e=>setTestPhone(e.target.value)} placeholder="9876543210" onKeyDown={e=>e.key==="Enter"&&sendTestCall()}/></div>
-                <button className="btn btn-sm btn-amber" onClick={sendTestCall} disabled={testLoading}>{testLoading?"...":"📞"}</button>
-              </div>
-            </div>
+          {canControl&&<div className="input-row" style={{gap:8}}>
+            <div className="field" style={{marginBottom:0,minWidth:160}}><input value={testPhone} onChange={e=>setTestPhone(e.target.value)} placeholder="Test call number" onKeyDown={e=>e.key==="Enter"&&sendTestCall()} style={{fontSize:13}}/></div>
+            <button className="btn btn-sm btn-amber" onClick={sendTestCall} disabled={testLoading} title="Send test call">{testLoading?"...":"📞 Test"}</button>
           </div>}
         </div>
 
-        {stats&&<div className="card" style={{marginBottom:20}}><div className="card-header"><div className="card-title">Connection Rate</div><span style={{fontSize:13,color:T.accent,fontWeight:600}}>{connRate}%</span></div><div className="card-body"><div className="progress-bar"><div className="progress-fill" style={{width:`${connRate}%`}}/></div></div></div>}
+        {/* KPIs */}
+        <div className="kpi-grid">
+          <div className="kpi-card"><div className="kpi-label">Total Calls</div><div className="kpi-value blue">{stats?.total??0}</div><div className="kpi-sub">{dateFrom||dateTo?"Filtered period":"All time"}</div></div>
+          <div className="kpi-card"><div className="kpi-label">Interested</div><div className="kpi-value green">{stats?.interested??0}</div><div className="kpi-sub">{stats?.total?`${Math.round(((stats.interested||0)/stats.total)*100)}% conversion`:""}</div></div>
+          <div className="kpi-card"><div className="kpi-label">Not Connected</div><div className="kpi-value red">{stats?.notConnected??0}</div><div className="kpi-sub">Busy + Failed</div></div>
+          <div className="kpi-card"><div className="kpi-label">Pending Leads</div><div className="kpi-value amber">{stats?.pending??0}</div><div className="kpi-sub">Awaiting next dial</div></div>
+        </div>
 
+        {/* Connection Rate */}
+        <div className="card" style={{marginBottom:20}}>
+          <div className="card-body" style={{paddingBottom:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <span style={{fontSize:13,fontWeight:600,color:T.text}}>Connection Rate</span>
+              <span style={{fontSize:18,fontWeight:700,color:T.accent}}>{connRate}%</span>
+            </div>
+            <div className="progress-bar"><div className="progress-fill" style={{width:`${connRate}%`}}/></div>
+          </div>
+        </div>
+
+        {/* Recent Calls */}
         <div className="card">
-          <div className="card-header"><div className="card-title">Recent Calls</div></div>
+          <div className="card-header"><div className="card-title">Recent Calls</div><span style={{fontSize:12,color:T.muted}}>Last 8</span></div>
           <div className="table-wrap">
-            {recentLogs.length===0?<div className="empty-state"><div className="empty-state-icon">📞</div><div className="empty-state-text">No calls yet</div></div>:(
+            {recentLogs.length===0?(
+              <div className="empty-state"><div className="empty-icon">📞</div><div className="empty-title">No calls yet</div></div>
+            ):(
               <table>
                 <thead><tr><th>Phone</th><th>Campaign</th><th>Result</th><th>Time</th></tr></thead>
                 <tbody>{recentLogs.map((log,i)=>(
                   <tr key={i}>
-                    <td style={{fontFamily:"monospace"}}>{log.phone}</td>
+                    <td style={{fontFamily:"monospace",fontWeight:500}}>{log.phone}</td>
                     <td><span className="tag">{log.campaign}</span></td>
                     <td><DisposBadge sub={log.sub_disposition}/></td>
                     <td style={{color:T.muted,fontSize:12}}>{new Date(log.logged_at).toLocaleString("en-IN")}</td>
@@ -407,127 +450,90 @@ function Campaigns({ showToast }) {
 
   useEffect(()=>{load();loadCallerIds();const i=setInterval(load,5000);return()=>clearInterval(i);},[]);
 
-  async function load(){
-    try{const d=await dbSelect("campaigns","?select=*&order=created_at.desc");setCampaigns(d);}
-    catch(e){}
-  }
-  async function loadCallerIds(){
-    try{const d=await dbSelect("caller_ids","?select=*&is_active=eq.true");setCallerIds(d);}catch(e){}
-  }
+  async function load(){try{setCampaigns(await dbSelect("campaigns","?select=*&order=created_at.desc"));}catch{}}
+  async function loadCallerIds(){try{setCallerIds(await dbSelect("caller_ids","?select=*&is_active=eq.true"));}catch{}}
 
   async function createCampaign(){
     if(!form.name.trim()){showToast("Campaign name required","error");return;}
     try{
       await dbInsert("campaigns",{...form,status:"PENDING",total_leads:0,called_count:0,pending_count:0});
       showToast("Campaign created!","success");
-      setShowCreate(false);
-      setForm({name:"",description:"",caller_id:"",max_retries:1,retry_after_minutes:30});
+      setShowCreate(false);setForm({name:"",description:"",caller_id:"",max_retries:1,retry_after_minutes:30});
       load();
-    }catch(e){showToast("Failed to create — name may already exist","error");}
+    }catch(e){showToast("Failed — name may already exist","error");}
   }
 
   async function startCampaign(name){
     setActionLoading(name+"_start");
-    try{
-      await renderFetch("/campaign/start",{method:"POST",body:JSON.stringify({campaign:name})});
-      showToast(`▶ "${name}" started`,"success");load();
-    }catch(e){showToast(e.message||"Failed to start","error");}
+    try{await renderFetch("/campaign/start",{method:"POST",body:JSON.stringify({campaign:name})});showToast(`▶ "${name}" started`,"success");load();}
+    catch(e){showToast(e.message||"Failed to start","error");}
     finally{setActionLoading(null);}
   }
 
   async function pauseCampaign(name){
     setActionLoading(name+"_pause");
-    try{
-      await renderFetch("/campaign/pause",{method:"POST",body:JSON.stringify({campaign:name})});
-      showToast(`⏸ "${name}" pausing after current call...`,"info");load();
-    }catch(e){showToast(e.message||"Failed to pause","error");}
+    try{await renderFetch("/campaign/pause",{method:"POST",body:JSON.stringify({campaign:name})});showToast(`⏸ "${name}" pausing...`,"info");load();}
+    catch(e){showToast(e.message||"Failed","error");}
     finally{setActionLoading(null);}
   }
 
   async function confirmDelete(){
     if(!deleteTarget)return;
     setActionLoading(deleteTarget+"_delete");
-    try{
-      await renderFetch("/campaign/delete",{method:"DELETE",body:JSON.stringify({campaign:deleteTarget})});
-      showToast(`🗑 "${deleteTarget}" deleted`,"success");
-      setDeleteTarget(null);load();
-    }catch(e){showToast(e.message||"Failed to delete","error");}
+    try{await renderFetch("/campaign/delete",{method:"DELETE",body:JSON.stringify({campaign:deleteTarget})});showToast(`Deleted "${deleteTarget}"`,"success");setDeleteTarget(null);load();}
+    catch(e){showToast(e.message||"Failed","error");}
     finally{setActionLoading(null);}
   }
 
   const hasRunning=campaigns.some(c=>c.status==="RUNNING");
 
-  const statusColor={PENDING:T.muted,RUNNING:T.green,PAUSED:T.amber,COMPLETED:T.accent};
-  const statusIcon={PENDING:"⏳",RUNNING:"▶",PAUSED:"⏸",COMPLETED:"✓"};
-
   return(
     <div>
       <div className="page-header">
-        <div><div className="page-title">Campaigns</div><div className="page-sub">Only one campaign can run at a time</div></div>
+        <div><div className="page-title">Campaigns</div><div className="page-sub">Only one can run at a time — use pause/resume to switch</div></div>
         <button className="btn btn-sm" onClick={()=>setShowCreate(true)}>+ New Campaign</button>
       </div>
       <div className="page-content">
-        {hasRunning&&<div style={{background:T.greenDim,border:`1px solid ${T.green}`,borderRadius:8,padding:"10px 16px",marginBottom:16,fontSize:13,color:T.green,display:"flex",alignItems:"center",gap:8}}><span className="live-dot"></span>A campaign is currently running. Pause it before starting another.</div>}
+        {hasRunning&&<div className="info-box green" style={{marginBottom:16,display:"flex",alignItems:"center",gap:8}}><span className="live-dot"></span>A campaign is running. Pause it before starting another.</div>}
         <div className="card">
           <div className="table-wrap">
             {campaigns.length===0?(
-              <div className="empty-state"><div className="empty-state-icon">🎯</div><div className="empty-state-text">No campaigns yet</div><div className="empty-state-sub">Create one to get started</div></div>
+              <div className="empty-state"><div className="empty-icon">🎯</div><div className="empty-title">No campaigns yet</div><div className="empty-sub">Create a campaign, upload leads, then start dialing</div></div>
             ):(
               <table>
-                <thead><tr><th>Campaign</th><th>Status</th><th>Progress</th><th>Retries</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Campaign</th><th>Status</th><th>Progress</th><th>Settings</th><th>Actions</th></tr></thead>
                 <tbody>{campaigns.map(c=>{
-                  const isRunning=c.status==="RUNNING";
-                  const isPaused=c.status==="PAUSED";
-                  const isPending=c.status==="PENDING";
-                  const isCompleted=c.status==="COMPLETED";
-                  const total=c.total_leads||0;
-                  const called=c.called_count||0;
+                  const total=c.total_leads||0;const called=c.called_count||0;
                   const pct=total?Math.round((called/total)*100):0;
+                  const isRunning=c.status==="RUNNING";
+                  const canStart=["PENDING","PAUSED"].includes(c.status)&&!hasRunning;
                   return(
                     <tr key={c.id}>
                       <td>
-                        <div style={{fontWeight:600}}>{c.name}</div>
-                        {c.description&&<div style={{fontSize:12,color:T.muted}}>{c.description}</div>}
-                        {c.caller_id&&<div style={{fontSize:11,color:T.muted,fontFamily:"monospace"}}>{c.caller_id}</div>}
+                        <div style={{fontWeight:600,color:T.text}}>{c.name}</div>
+                        {c.description&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{c.description}</div>}
+                        {c.caller_id&&<div style={{fontSize:11,color:T.muted,fontFamily:"monospace",marginTop:2}}>{c.caller_id}</div>}
                       </td>
                       <td>
-                        <span style={{color:statusColor[c.status]||T.muted,fontWeight:600,fontSize:13}}>
-                          {statusIcon[c.status]} {c.status}
-                        </span>
-                        {isRunning&&<span className="live-dot" style={{marginLeft:6}}></span>}
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          {isRunning&&<span className="live-dot"></span>}
+                          <DisposBadge sub={c.status}/>
+                        </div>
                       </td>
-                      <td style={{minWidth:140}}>
-                        <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{called} / {total} called ({pct}%)</div>
+                      <td style={{minWidth:160}}>
+                        <div style={{fontSize:12,color:T.muted,marginBottom:6}}>{called} / {total} called ({pct}%)</div>
                         <div className="progress-bar"><div className="progress-fill" style={{width:`${pct}%`}}/></div>
+                        <div style={{fontSize:11,color:T.muted,marginTop:4}}>Pending: {c.pending_count||0}</div>
                       </td>
                       <td style={{fontSize:12}}>
-                        <div>Max: {c.max_retries}x</div>
-                        <div style={{color:T.muted}}>After: {c.retry_after_minutes}min</div>
+                        <div>Retries: <strong>{c.max_retries}x</strong></div>
+                        <div style={{color:T.muted}}>Gap: {c.retry_after_minutes} min</div>
                       </td>
                       <td>
                         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                          {(isPending||isPaused)&&(
-                            <button className="btn btn-sm btn-green"
-                              disabled={hasRunning||actionLoading===c.name+"_start"}
-                              onClick={()=>startCampaign(c.name)}
-                              title={hasRunning&&!isRunning?"Pause running campaign first":""}>
-                              {actionLoading===c.name+"_start"?"...":"▶ Start"}
-                            </button>
-                          )}
-                          {isRunning&&(
-                            <button className="btn btn-sm btn-amber"
-                              disabled={actionLoading===c.name+"_pause"}
-                              onClick={()=>pauseCampaign(c.name)}>
-                              {actionLoading===c.name+"_pause"?"...":"⏸ Pause"}
-                            </button>
-                          )}
-                          {!isRunning&&(
-                            <button className="btn btn-sm btn-danger"
-                              disabled={actionLoading===c.name+"_delete"}
-                              onClick={()=>setDeleteTarget(c.name)}>
-                              🗑
-                            </button>
-                          )}
+                          {canStart&&<button className="btn btn-sm btn-green" onClick={()=>startCampaign(c.name)} disabled={!!actionLoading}>{actionLoading===c.name+"_start"?"...":"▶ Start"}</button>}
+                          {isRunning&&<button className="btn btn-sm btn-amber" onClick={()=>pauseCampaign(c.name)} disabled={!!actionLoading}>{actionLoading===c.name+"_pause"?"...":"⏸ Pause"}</button>}
+                          {!isRunning&&<button className="btn btn-sm btn-ghost" style={{color:T.red,borderColor:T.red}} onClick={()=>setDeleteTarget(c.name)} disabled={!!actionLoading}>🗑</button>}
                         </div>
                       </td>
                     </tr>
@@ -540,62 +546,46 @@ function Campaigns({ showToast }) {
       </div>
 
       {showCreate&&(
-        <div className="modal-overlay" onClick={()=>setShowCreate(false)}>
-          <div className="modal" onClick={e=>e.stopPropagation()}>
-            <div className="modal-title">New Campaign</div>
-            <div className="modal-sub">Set retry logic here — leads will inherit these settings</div>
-            <div className="field"><label>Campaign Name *</label><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Malayalam Hiring June"/></div>
-            <div className="field"><label>Description (optional)</label><input value={form.description} onChange={e=>setForm({...form,description:e.target.value})} placeholder="Brief description"/></div>
-            <div className="field"><label>Caller ID</label>
-              <select value={form.caller_id} onChange={e=>setForm({...form,caller_id:e.target.value})}>
-                <option value="">Use default active number</option>
-                {callerIds.map(c=><option key={c.id} value={c.number}>{c.label} ({c.number})</option>)}
-              </select>
-            </div>
-            <div className="two-col">
-              <div className="field"><label>Max Retries</label>
-                <input type="number" min="1" max="10" value={form.max_retries} onChange={e=>setForm({...form,max_retries:parseInt(e.target.value)||1})}/>
-              </div>
-              <div className="field">
-                <label>Retry After (minutes)</label>
-                <input type="number" min="1" value={form.retry_after_minutes} onChange={e=>setForm({...form,retry_after_minutes:parseInt(e.target.value)||30})}/>
-                {form.retry_after_minutes<30&&<div className="warn">⚠️ Recommended: at least 30 min</div>}
-              </div>
-            </div>
-            <div className="modal-actions">
-              <button className="btn btn-sm btn-ghost" onClick={()=>setShowCreate(false)}>Cancel</button>
-              <button className="btn btn-sm" onClick={createCampaign}>Create Campaign</button>
+        <Modal title="New Campaign" sub="Settings apply to all leads in this campaign" onClose={()=>setShowCreate(false)}
+          actions={<><button className="btn btn-sm btn-ghost" onClick={()=>setShowCreate(false)}>Cancel</button><button className="btn btn-sm" onClick={createCampaign}>Create Campaign</button></>}>
+          <div className="field"><label>Campaign Name *</label><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Malayalam Hiring June"/></div>
+          <div className="field"><label>Description</label><input value={form.description} onChange={e=>setForm({...form,description:e.target.value})} placeholder="Brief description (optional)"/></div>
+          <div className="field"><label>Caller ID</label>
+            <select value={form.caller_id} onChange={e=>setForm({...form,caller_id:e.target.value})}>
+              <option value="">Use default active number</option>
+              {callerIds.map(c=><option key={c.id} value={c.number}>{c.label} ({c.number})</option>)}
+            </select>
+          </div>
+          <div className="two-col">
+            <div className="field"><label>Max Retries per Lead</label><input type="number" min="1" max="10" value={form.max_retries} onChange={e=>setForm({...form,max_retries:parseInt(e.target.value)||1})}/></div>
+            <div className="field">
+              <label>Retry Gap (minutes)</label>
+              <input type="number" min="1" value={form.retry_after_minutes} onChange={e=>setForm({...form,retry_after_minutes:parseInt(e.target.value)||30})}/>
+              {form.retry_after_minutes<30&&<div className="warn">⚠️ Recommended: at least 30 min</div>}
             </div>
           </div>
-        </div>
+          <div className="info-box blue" style={{marginTop:8}}>
+            Example: 100 leads × {form.max_retries} retries = up to {100*form.max_retries} call attempts. Each lead gets a {form.retry_after_minutes}min gap between attempts.
+          </div>
+        </Modal>
       )}
 
       {deleteTarget&&(
-        <div className="modal-overlay" onClick={()=>setDeleteTarget(null)}>
-          <div className="modal" onClick={e=>e.stopPropagation()}>
-            <div className="modal-title">🗑 Delete Campaign</div>
-            <div className="modal-sub">This will permanently delete <strong>"{deleteTarget}"</strong> and all its PENDING leads. Called leads and logs are kept.</div>
-            <div style={{background:T.redDim,border:`1px solid ${T.red}`,borderRadius:8,padding:12,fontSize:13,color:T.red,marginBottom:16}}>
-              ⚠️ This cannot be undone. Pending leads will not be dialed.
-            </div>
-            <div className="modal-actions">
-              <button className="btn btn-sm btn-ghost" onClick={()=>setDeleteTarget(null)}>Cancel</button>
-              <button className="btn btn-sm btn-danger" onClick={confirmDelete} disabled={actionLoading===deleteTarget+"_delete"}>
-                {actionLoading===deleteTarget+"_delete"?"Deleting...":"Yes, Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <Modal title="Delete Campaign" onClose={()=>setDeleteTarget(null)}
+          actions={<><button className="btn btn-sm btn-ghost" onClick={()=>setDeleteTarget(null)}>Cancel</button><button className="btn btn-sm btn-danger" onClick={confirmDelete}>{actionLoading?"Deleting...":"Yes, Delete"}</button></>}>
+          <div className="info-box red">⚠️ This will permanently delete "<strong>{deleteTarget}</strong>" and all its PENDING leads. Called leads and logs are kept.</div>
+        </Modal>
       )}
     </div>
   );
 }
 
-
-// LEADS — with validation
+// ================================================
+// LEADS
 // ================================================
 function Leads({ showToast }) {
   const [leads,setLeads]=useState([]);
+  const [campaigns,setCampaigns]=useState([]);
   const [loading,setLoading]=useState(false);
   const [dragOver,setDragOver]=useState(false);
   const [uploading,setUploading]=useState(false);
@@ -606,28 +596,21 @@ function Leads({ showToast }) {
   const [selectedCampaignData,setSelectedCampaignData]=useState(null);
   const [filterCampaign,setFilterCampaign]=useState("ALL");
   const [filterStatus,setFilterStatus]=useState("ALL");
-  const [campaigns,setCampaigns]=useState([]);
   const fileRef=useRef();
   const selectedFile=useRef(null);
 
-  useEffect(()=>{loadLeads();loadCampaignsList();},[]);
+  useEffect(()=>{loadCampaigns();loadLeads();},[]);
+
+  async function loadCampaigns(){try{setCampaigns(await dbSelect("campaigns","?select=name,max_retries,retry_after_minutes,status&order=created_at.desc"));}catch{}}
 
   async function loadLeads(camp=filterCampaign){
     setLoading(true);
     try{
       let params="?select=*&order=uploaded_at.desc&limit=500";
       if(camp&&camp!=="ALL") params+=`&campaign=eq.${encodeURIComponent(camp)}`;
-      const data=await dbSelect("leads",params);
-      setLeads(data);
+      setLeads(await dbSelect("leads",params));
     }catch(e){showToast("Failed to load leads","error");}
     finally{setLoading(false);}
-  }
-
-  async function loadCampaignsList(){
-    try{
-      const data=await dbSelect("campaigns","?select=name,max_retries,retry_after_minutes,status&order=created_at.desc");
-      setCampaigns(data);
-    }catch(e){}
   }
 
   function parseCSV(text){
@@ -646,7 +629,7 @@ function Leads({ showToast }) {
       const phone=(row.phone||row.number||"").replace(/\D/g,"");
       const name=row.name||row.candidate||"";
       if(!phone){rejected.push({...row,_reason:"Missing phone number",_line:idx+2});return;}
-      if(phone.length!==10){rejected.push({...row,phone,_reason:`Invalid length: ${phone.length} digits (need 10)`,_line:idx+2});return;}
+      if(phone.length!==10){rejected.push({...row,phone,_reason:`Invalid: ${phone.length} digits (need 10)`,_line:idx+2});return;}
       if(!/^\d{10}$/.test(phone)){rejected.push({...row,phone,_reason:"Non-numeric characters",_line:idx+2});return;}
       valid.push({...row,phone,name:name||"Unknown"});
     });
@@ -659,16 +642,11 @@ function Leads({ showToast }) {
     const text=await file.text();
     const rows=parseCSV(text);
     const{valid,rejected}=validateRows(rows);
-
-    // Check DND conflicts
     let dndList=[];
-    try{const d=await dbSelect("dnd_list","?select=phone");dndList=d.map(r=>r.phone);}catch(e){}
-    const dndHits=valid.filter(r=>dndList.includes(r.phone));
-    const cleanValid=valid.filter(r=>!dndList.includes(r.phone));
-
-    setValidRows(cleanValid);
+    try{const d=await dbSelect("dnd_list","?select=phone");dndList=d.map(r=>r.phone);}catch{}
+    setValidRows(valid.filter(r=>!dndList.includes(r.phone)));
     setRejectedRows(rejected);
-    setDndConflicts(dndHits);
+    setDndConflicts(valid.filter(r=>dndList.includes(r.phone)));
   }
 
   function downloadTemplate(){
@@ -676,21 +654,23 @@ function Leads({ showToast }) {
     showToast("Template downloaded","success");
   }
 
-  function downloadRejected(){
-    if(!rejectedRows.length)return;
-    downloadCSV(`rejected_leads_${Date.now()}.csv`,["name","phone","reason"],rejectedRows.map(r=>[r.name||"",r.phone||"",r._reason]));
-    showToast("Rejected rows downloaded","success");
-  }
-
   async function uploadLeads(){
     if(!campaign){showToast("Select a campaign first","error");return;}
     if(!validRows.length){showToast("No valid leads to upload","error");return;}
+    const camp=campaigns.find(c=>c.name===campaign);
+    if(camp?.status==="RUNNING"){showToast("Pause the campaign first before adding leads","error");return;}
     setUploading(true);
     try{
-      const maxRetries=selectedCampaignData?.max_retries||1;
-      const retryAfter=selectedCampaignData?.retry_after_minutes||30;
-      const payload=validRows.map(r=>({name:r.name,phone:r.phone,campaign:campaign,status:"PENDING",max_retries:maxRetries,retry_after_minutes:retryAfter}));
+      const now=new Date().toISOString();
+      const payload=validRows.map(r=>({
+        name:r.name,phone:r.phone,campaign,status:"PENDING",
+        attempt_count:0,eligible_at:now,
+        max_retries:selectedCampaignData?.max_retries||1,
+        retry_after_minutes:selectedCampaignData?.retry_after_minutes||30,
+      }));
       await dbInsert("leads",payload);
+      // Update campaign total_leads count
+      await dbUpdate("campaigns",`name=eq.${encodeURIComponent(campaign)}`,{total_leads:(camp?.total_leads||0)+payload.length,pending_count:(camp?.pending_count||0)+payload.length});
       showToast(`${payload.length} leads uploaded to "${campaign}"`,"success");
       setValidRows([]);setRejectedRows([]);setDndConflicts([]);setCampaign("");setSelectedCampaignData(null);
       fileRef.current.value="";selectedFile.current=null;
@@ -708,8 +688,8 @@ function Leads({ showToast }) {
   return(
     <div>
       <div className="page-header">
-        <div><div className="page-title">Leads</div><div className="page-sub">Upload and manage candidate leads</div></div>
-        <button className="btn btn-sm btn-ghost" onClick={downloadTemplate}>↓ Download Template</button>
+        <div><div className="page-title">Leads</div><div className="page-sub">Upload and manage candidate leads per campaign</div></div>
+        <button className="btn btn-sm btn-ghost" onClick={downloadTemplate}>↓ Template</button>
       </div>
       <div className="page-content">
         <div className="card">
@@ -717,22 +697,18 @@ function Leads({ showToast }) {
           <div className="card-body">
             <div className="two-col" style={{marginBottom:16}}>
               <div className="field">
-                <label>Select Campaign *</label>
-                <select value={campaign} onChange={e=>{
-                  setCampaign(e.target.value);
-                  const c=campaigns.find(x=>x.name===e.target.value);
-                  setSelectedCampaignData(c||null);
-                }}>
-                  <option value="">— Select a campaign —</option>
-                  {campaigns.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+                <label>Assign to Campaign *</label>
+                <select value={campaign} onChange={e=>{setCampaign(e.target.value);setSelectedCampaignData(campaigns.find(c=>c.name===e.target.value)||null);}}>
+                  <option value="">— Select campaign —</option>
+                  {campaigns.map(c=><option key={c.name} value={c.name} disabled={c.status==="RUNNING"}>{c.name}{c.status==="RUNNING"?" (running — pause first)":""}</option>)}
                 </select>
-                {campaigns.length===0&&<div className="warn">⚠️ No campaigns yet — create one in the Campaigns page first</div>}
+                {campaigns.length===0&&<div className="warn">⚠️ Create a campaign first</div>}
               </div>
               {selectedCampaignData&&(
-                <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:12,fontSize:13}}>
-                  <div style={{color:T.muted,fontSize:11,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.5px"}}>Campaign Settings</div>
-                  <div>Max Retries: <strong>{selectedCampaignData.max_retries}</strong></div>
-                  <div style={{marginTop:4}}>Retry After: <strong>{selectedCampaignData.retry_after_minutes} min</strong></div>
+                <div style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:8,padding:12,fontSize:13}}>
+                  <div style={{fontWeight:600,marginBottom:6}}>{selectedCampaignData.name}</div>
+                  <div style={{color:T.muted}}>Max retries: <strong style={{color:T.text}}>{selectedCampaignData.max_retries}x</strong></div>
+                  <div style={{color:T.muted,marginTop:4}}>Retry gap: <strong style={{color:T.text}}>{selectedCampaignData.retry_after_minutes} min</strong></div>
                 </div>
               )}
             </div>
@@ -749,55 +725,39 @@ function Leads({ showToast }) {
 
             {(validRows.length>0||rejectedRows.length>0||dndConflicts.length>0)&&(
               <div style={{marginTop:20}}>
-                <hr className="section-divider"/>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:16}}>
                   <div style={{background:T.greenDim,border:`1px solid ${T.green}`,borderRadius:8,padding:12,textAlign:"center"}}>
-                    <div style={{fontSize:24,fontWeight:700,color:T.green}}>{validRows.length}</div>
+                    <div style={{fontSize:22,fontWeight:700,color:T.green}}>{validRows.length}</div>
                     <div style={{fontSize:12,color:T.green}}>Valid — Ready to upload</div>
                   </div>
                   <div style={{background:T.redDim,border:`1px solid ${T.red}`,borderRadius:8,padding:12,textAlign:"center"}}>
-                    <div style={{fontSize:24,fontWeight:700,color:T.red}}>{rejectedRows.length}</div>
+                    <div style={{fontSize:22,fontWeight:700,color:T.red}}>{rejectedRows.length}</div>
                     <div style={{fontSize:12,color:T.red}}>Rejected — Invalid numbers</div>
                   </div>
                   <div style={{background:T.amberDim,border:`1px solid ${T.amber}`,borderRadius:8,padding:12,textAlign:"center"}}>
-                    <div style={{fontSize:24,fontWeight:700,color:T.amber}}>{dndConflicts.length}</div>
-                    <div style={{fontSize:12,color:T.amber}}>DND Conflicts — Skipped</div>
+                    <div style={{fontSize:22,fontWeight:700,color:T.amber}}>{dndConflicts.length}</div>
+                    <div style={{fontSize:12,color:T.amber}}>DND — Will be skipped</div>
                   </div>
                 </div>
-
                 {rejectedRows.length>0&&(
-                  <div style={{marginBottom:16}}>
-                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                      <div style={{fontSize:13,fontWeight:600,color:T.red}}>❌ Rejected Numbers</div>
-                      <button className="btn btn-sm btn-danger" onClick={downloadRejected}>↓ Download to Fix</button>
+                  <div style={{marginBottom:12}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                      <span style={{fontSize:13,fontWeight:600,color:T.red}}>❌ Rejected Numbers</span>
+                      <button className="btn btn-sm btn-danger" onClick={()=>downloadCSV(`rejected_${Date.now()}.csv`,["name","phone","reason"],rejectedRows.map(r=>[r.name||"",r.phone||"",r._reason]))}>↓ Download to Fix</button>
                     </div>
-                    {rejectedRows.slice(0,5).map((r,i)=>(
+                    {rejectedRows.slice(0,3).map((r,i)=>(
                       <div key={i} className="reject-row">
-                        <div><span style={{fontFamily:"monospace"}}>{r.phone||"—"}</span> {r.name&&`| ${r.name}`}</div>
-                        <div className="reject-reason">{r._reason}</div>
+                        <span style={{fontFamily:"monospace"}}>{r.phone||"—"}</span>
+                        <span style={{color:T.red,fontSize:11}}>{r._reason}</span>
                       </div>
                     ))}
-                    {rejectedRows.length>5&&<div style={{fontSize:12,color:T.muted,marginTop:6}}>...and {rejectedRows.length-5} more. Download to see all.</div>}
+                    {rejectedRows.length>3&&<div style={{fontSize:12,color:T.muted,marginTop:4}}>+{rejectedRows.length-3} more. Download to see all.</div>}
                   </div>
                 )}
-
-                {dndConflicts.length>0&&(
-                  <div style={{marginBottom:16}}>
-                    <div style={{fontSize:13,fontWeight:600,color:T.amber,marginBottom:8}}>🚫 DND Conflicts (will be skipped)</div>
-                    {dndConflicts.slice(0,3).map((r,i)=>(
-                      <div key={i} className="reject-row" style={{background:T.amberDim,borderColor:T.amber}}>
-                        <span style={{fontFamily:"monospace"}}>{r.phone}</span> {r.name&&`| ${r.name}`}
-                        <span className="reject-reason">On DND list</span>
-                      </div>
-                    ))}
-                    {dndConflicts.length>3&&<div style={{fontSize:12,color:T.muted,marginTop:6}}>...and {dndConflicts.length-3} more</div>}
-                  </div>
-                )}
-
                 {validRows.length>0&&(
                   <div style={{display:"flex",gap:10}}>
-                    <button className="btn btn-sm btn-green" disabled={uploading} onClick={uploadLeads}>{uploading ? "Uploading..." : `✓ Upload ${validRows.length} Valid Leads`}</button>
-                    <button className="btn btn-sm btn-ghost" onClick={()=>{setValidRows([]);setRejectedRows([]);setDndConflicts([]);fileRef.current.value="";selectedFile.current=null;setCampaign("");setSelectedCampaignData(null);}}>Cancel</button>
+                    <button className="btn btn-sm btn-green" disabled={uploading||!campaign} onClick={uploadLeads}>{uploading?"Uploading...":`✓ Upload ${validRows.length} leads`}</button>
+                    <button className="btn btn-sm btn-ghost" onClick={()=>{setValidRows([]);setRejectedRows([]);setDndConflicts([]);fileRef.current.value="";selectedFile.current=null;}}>Cancel</button>
                   </div>
                 )}
               </div>
@@ -808,7 +768,7 @@ function Leads({ showToast }) {
         <div className="card">
           <div className="card-header">
             <div className="card-title">All Leads ({filtered.length})</div>
-            <div className="filter-row" style={{margin:0}}>
+            <div className="filter-row">
               <select className="filter-select" value={filterCampaign} onChange={e=>{setFilterCampaign(e.target.value);loadLeads(e.target.value);}}>
                 <option value="ALL">All Campaigns</option>
                 {campaigns.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
@@ -816,26 +776,29 @@ function Leads({ showToast }) {
               <select className="filter-select" value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
                 <option value="ALL">All Status</option>
                 <option value="PENDING">Pending</option>
-                <option value="CALLED">Called</option>
-                <option value="RETRY">Retry</option>
+                <option value="CALLED">Called (retry pending)</option>
+                <option value="CALLED_FINAL">Completed</option>
+                <option value="SKIPPED">Skipped (DND)</option>
               </select>
-              <button className="btn btn-sm btn-ghost" onClick={loadLeads}>↻</button>
+              <button className="btn btn-sm btn-ghost" onClick={()=>loadLeads(filterCampaign)}>↻</button>
             </div>
           </div>
           <div className="table-wrap">
             {loading?<div className="empty-state">Loading...</div>:filtered.length===0?(
-              <div className="empty-state"><div className="empty-state-icon">👥</div><div className="empty-state-text">No leads yet</div></div>
+              <div className="empty-state"><div className="empty-icon">👥</div><div className="empty-title">No leads found</div><div className="empty-sub">Upload a CSV to get started</div></div>
             ):(
               <table>
-                <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th>Status</th><th>Attempts</th><th>Last Called</th></tr></thead>
+                <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th>Status</th><th>Attempts</th><th>Next Eligible</th></tr></thead>
                 <tbody>{filtered.map(lead=>(
                   <tr key={lead.id}>
                     <td style={{fontWeight:500}}>{lead.name}</td>
                     <td style={{fontFamily:"monospace"}}>{lead.phone}</td>
                     <td><span className="tag">{lead.campaign}</span></td>
                     <td><DisposBadge sub={lead.status}/></td>
-                    <td>{lead.attempt_count||0} / {lead.max_retries||1}</td>
-                    <td style={{color:T.muted,fontSize:12}}>{lead.last_attempt_at?new Date(lead.last_attempt_at).toLocaleString("en-IN"):"—"}</td>
+                    <td style={{fontSize:12}}>{lead.attempt_count||0} / {lead.max_retries||1}</td>
+                    <td style={{color:T.muted,fontSize:12}}>
+                      {lead.eligible_at&&lead.status==="CALLED"?new Date(lead.eligible_at).toLocaleString("en-IN"):"—"}
+                    </td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -848,7 +811,7 @@ function Leads({ showToast }) {
 }
 
 // ================================================
-// INTERESTED CANDIDATES MODULE
+// INTERESTED CANDIDATES
 // ================================================
 function InterestedCandidates({ showToast }) {
   const [candidates,setCandidates]=useState([]);
@@ -861,91 +824,65 @@ function InterestedCandidates({ showToast }) {
   const [filterStatus,setFilterStatus]=useState("ALL");
   const [campaigns,setCampaigns]=useState([]);
 
-  useEffect(()=>{loadCandidates();},[]);
+  useEffect(()=>{load();},[]);
 
-  async function loadCandidates(){
+  async function load(){
     setLoading(true);
     try{
       const [logs,updatesData]=await Promise.all([
         dbSelect("call_logs","?select=phone,campaign,logged_at&sub_disposition=eq.INTERESTED&order=logged_at.desc"),
         dbSelect("candidate_updates","?select=*&order=updated_at.desc"),
       ]);
-      // Get lead names
       const phones=[...new Set(logs.map(l=>l.phone))];
       let leadsMap={};
       if(phones.length){
-        const leads=await dbSelect("leads",`?select=phone,name&phone=in.(${phones.join(",")})`);
+        const leads=await dbSelect("leads",`?select=phone,name&phone=in.(${phones.slice(0,50).join(",")})`);
         leads.forEach(l=>leadsMap[l.phone]=l.name);
       }
       const enriched=logs.map(l=>({...l,name:leadsMap[l.phone]||"Unknown"}));
       setCandidates(enriched);
       setCampaigns([...new Set(enriched.map(c=>c.campaign).filter(Boolean))]);
-
-      // Map updates by phone (latest per phone)
       const updMap={};
       updatesData.forEach(u=>{if(!updMap[u.phone])updMap[u.phone]=[];updMap[u.phone].push(u);});
       setUpdates(updMap);
-    }catch(e){showToast("Failed to load candidates","error");}
+    }catch(e){showToast("Failed to load","error");}
     finally{setLoading(false);}
   }
 
   async function saveUpdate(){
-    if(!selected){return;}
+    if(!selected)return;
     setSaving(true);
     try{
-      await dbInsert("candidate_updates",{
-        phone:selected.phone,
-        candidate_name:selected.name,
-        campaign:selected.campaign,
-        status:updateForm.status,
-        comment:updateForm.comment,
-        updated_by:getEmail(),
-      });
-      showToast("Update saved","success");
-      setSelected(null);setUpdateForm({status:"PENDING",comment:""});
-      loadCandidates();
-    }catch(e){showToast("Failed to save update","error");}
+      await dbInsert("candidate_updates",{phone:selected.phone,candidate_name:selected.name,campaign:selected.campaign,status:updateForm.status,comment:updateForm.comment,updated_by:getEmail()});
+      showToast("Update saved","success");setSelected(null);setUpdateForm({status:"PENDING",comment:""});load();
+    }catch(e){showToast("Failed","error");}
     finally{setSaving(false);}
-  }
-
-  function exportReport(){
-    const rows=filtered.map(c=>{
-      const latestUpdate=updates[c.phone]?.[0];
-      return[c.name,c.phone,c.campaign,latestUpdate?.status||"PENDING",latestUpdate?.comment||"",latestUpdate?.updated_by||"",latestUpdate?.updated_at?new Date(latestUpdate.updated_at).toLocaleString("en-IN"):"",new Date(c.logged_at).toLocaleString("en-IN")];
-    });
-    downloadCSV(`interested_candidates_${Date.now()}.csv`,["Name","Phone","Campaign","Status","Comment","Updated By","Updated At","Called At"],rows);
-    showToast("Report downloaded","success");
   }
 
   const filtered=candidates.filter(c=>{
     const cMatch=filterCampaign==="ALL"||c.campaign===filterCampaign;
-    const latestStatus=updates[c.phone]?.[0]?.status||"PENDING";
-    const sMatch=filterStatus==="ALL"||latestStatus===filterStatus;
+    const s=updates[c.phone]?.[0]?.status||"PENDING";
+    const sMatch=filterStatus==="ALL"||s===filterStatus;
     return cMatch&&sMatch;
   });
 
-  // KPIs
   const total=candidates.length;
-  const statusCounts={PICKED_UP:0,REJECTED:0,HIRED:0,PENDING:0};
-  candidates.forEach(c=>{const s=updates[c.phone]?.[0]?.status||"PENDING";statusCounts[s]=(statusCounts[s]||0)+1;});
-  const convRate=total?Math.round((statusCounts.HIRED/total)*100):0;
+  const sc={PICKED_UP:0,REJECTED:0,HIRED:0,PENDING:0};
+  candidates.forEach(c=>{const s=updates[c.phone]?.[0]?.status||"PENDING";sc[s]=(sc[s]||0)+1;});
 
   return(
     <div>
       <div className="page-header">
         <div><div className="page-title">Interested Candidates</div><div className="page-sub">Track follow-ups and interview pipeline</div></div>
-        <button className="btn btn-sm btn-ghost" onClick={exportReport}>↓ Download Report</button>
+        <button className="btn btn-sm btn-ghost" onClick={()=>downloadCSV(`candidates_${Date.now()}.csv`,["Name","Phone","Campaign","Status","Comment","Updated By","Time"],filtered.map(c=>{const u=updates[c.phone]?.[0];return[c.name,c.phone,c.campaign,u?.status||"PENDING",u?.comment||"",u?.updated_by||"",u?.updated_at?new Date(u.updated_at).toLocaleString("en-IN"):""];}))}>↓ Report</button>
       </div>
       <div className="page-content">
-        <div className="stats-grid-5">
-          <div className="stat-card"><div className="stat-label">Total Interested</div><div className="stat-value blue">{total}</div></div>
-          <div className="stat-card"><div className="stat-label">Picked Up</div><div className="stat-value green">{statusCounts.PICKED_UP}</div></div>
-          <div className="stat-card"><div className="stat-label">Rejected</div><div className="stat-value red">{statusCounts.REJECTED}</div></div>
-          <div className="stat-card"><div className="stat-label">Hired</div><div className="stat-value purple">{statusCounts.HIRED}</div></div>
-          <div className="stat-card"><div className="stat-label">Conversion Rate</div><div className="stat-value amber">{convRate}%</div><div className="stat-sub">Interested → Hired</div></div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:20}}>
+          {[["Total","blue",total],["Picked Up","green",sc.PICKED_UP],["Rejected","red",sc.REJECTED],["Hired","purple",sc.HIRED],["Pending","amber",sc.PENDING]].map(([l,c,v])=>(
+            <div key={l} className="kpi-card"><div className="kpi-label">{l}</div><div className={`kpi-value ${c}`}>{v}</div></div>
+          ))}
         </div>
-
-        <div className="filter-row">
+        <div className="filter-row" style={{marginBottom:16}}>
           <select className="filter-select" value={filterCampaign} onChange={e=>setFilterCampaign(e.target.value)}>
             <option value="ALL">All Campaigns</option>
             {campaigns.map(c=><option key={c} value={c}>{c}</option>)}
@@ -957,131 +894,105 @@ function InterestedCandidates({ showToast }) {
             <option value="REJECTED">Rejected</option>
             <option value="HIRED">Hired</option>
           </select>
-          <button className="btn btn-sm btn-ghost" onClick={loadCandidates}>↻</button>
+          <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
         </div>
-
         <div className="card">
           <div className="table-wrap">
             {loading?<div className="empty-state">Loading...</div>:filtered.length===0?(
-              <div className="empty-state"><div className="empty-state-icon">⭐</div><div className="empty-state-text">No interested candidates yet</div><div className="empty-state-sub">Candidates who press 1 appear here</div></div>
+              <div className="empty-state"><div className="empty-icon">⭐</div><div className="empty-title">No interested candidates yet</div><div className="empty-sub">Candidates who press 1 appear here</div></div>
             ):(
               <table>
-                <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th>Status</th><th>Last Update</th><th>Updated By</th><th>Action</th></tr></thead>
-                <tbody>{filtered.map((c,i)=>{
-                  const latest=updates[c.phone]?.[0];
-                  return(
-                    <tr key={i}>
-                      <td style={{fontWeight:500}}>{c.name}</td>
-                      <td style={{fontFamily:"monospace"}}>{c.phone}</td>
-                      <td><span className="tag">{c.campaign}</span></td>
-                      <td><DisposBadge sub={latest?.status||"PENDING"}/></td>
-                      <td style={{fontSize:12,color:T.muted,maxWidth:200}}>{latest?.comment||"—"}</td>
-                      <td style={{fontSize:12,color:T.muted}}>{latest?.updated_by||"—"}</td>
-                      <td><button className="btn btn-sm btn-purple" onClick={()=>{setSelected(c);setUpdateForm({status:latest?.status||"PENDING",comment:""});}}>+ Update</button></td>
-                    </tr>
-                  );
-                })}</tbody>
+                <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th>Status</th><th>Last Update</th><th>By</th><th></th></tr></thead>
+                <tbody>{filtered.map((c,i)=>{const u=updates[c.phone]?.[0];return(
+                  <tr key={i}>
+                    <td style={{fontWeight:500}}>{c.name}</td>
+                    <td style={{fontFamily:"monospace"}}>{c.phone}</td>
+                    <td><span className="tag">{c.campaign}</span></td>
+                    <td><DisposBadge sub={u?.status||"PENDING"}/></td>
+                    <td style={{fontSize:12,color:T.muted,maxWidth:180}}>{u?.comment||"—"}</td>
+                    <td style={{fontSize:11,color:T.muted}}>{u?.updated_by?.split("@")[0]||"—"}</td>
+                    <td><button className="btn btn-sm btn-purple" onClick={()=>{setSelected(c);setUpdateForm({status:u?.status||"PENDING",comment:""});}}>Update</button></td>
+                  </tr>
+                );})}
+                </tbody>
               </table>
             )}
           </div>
         </div>
       </div>
-
       {selected&&(
-        <div className="modal-overlay" onClick={()=>setSelected(null)}>
-          <div className="modal" onClick={e=>e.stopPropagation()}>
-            <div className="modal-title">Update: {selected.name}</div>
-            <div className="modal-sub" style={{fontFamily:"monospace"}}>{selected.phone} · {selected.campaign}</div>
-
-            {/* Update history */}
-            {updates[selected.phone]?.length>0&&(
-              <div style={{marginBottom:16}}>
-                <div style={{fontSize:12,fontWeight:600,color:T.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.5px"}}>History</div>
-                {updates[selected.phone].map((u,i)=>(
-                  <div key={i} className="update-row">
-                    <div style={{display:"flex",alignItems:"center",gap:8}}><DisposBadge sub={u.status}/><span style={{fontSize:12,color:T.muted}}>by {u.updated_by}</span></div>
-                    {u.comment&&<div className="update-comment">"{u.comment}"</div>}
-                    <div className="update-meta">{new Date(u.updated_at).toLocaleString("en-IN")}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <hr className="section-divider"/>
-            <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Add New Update</div>
-            <div className="field">
-              <label>Status</label>
-              <select value={updateForm.status} onChange={e=>setUpdateForm({...updateForm,status:e.target.value})}>
-                <option value="PENDING">Pending</option>
-                <option value="PICKED_UP">Picked Up for Interview</option>
-                <option value="REJECTED">Rejected</option>
-                <option value="HIRED">Hired</option>
-              </select>
+        <Modal title={`Update: ${selected.name}`} sub={`${selected.phone} · ${selected.campaign}`} onClose={()=>setSelected(null)}
+          actions={<><button className="btn btn-sm btn-ghost" onClick={()=>setSelected(null)}>Cancel</button><button className="btn btn-sm btn-purple" onClick={saveUpdate} disabled={saving}>{saving?"Saving...":"Save Update"}</button></>}>
+          {updates[selected.phone]?.length>0&&(
+            <div style={{marginBottom:16}}>
+              <div className="section-label">History</div>
+              {updates[selected.phone].map((u,i)=>(
+                <div key={i} style={{padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}><DisposBadge sub={u.status}/><span style={{fontSize:12,color:T.muted}}>by {u.updated_by}</span></div>
+                  {u.comment&&<div style={{fontSize:13,color:T.text,marginTop:4,fontStyle:"italic"}}>"{u.comment}"</div>}
+                  <div style={{fontSize:11,color:T.muted,marginTop:4}}>{new Date(u.updated_at).toLocaleString("en-IN")}</div>
+                </div>
+              ))}
             </div>
-            <div className="field">
-              <label>Comment (optional)</label>
-              <textarea rows="3" style={{resize:"vertical"}} placeholder="Add notes about this candidate..." value={updateForm.comment} onChange={e=>setUpdateForm({...updateForm,comment:e.target.value})}/>
-            </div>
-            <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Will be saved as: <strong>{getEmail()}</strong></div>
-            <div className="modal-actions">
-              <button className="btn btn-sm btn-ghost" onClick={()=>setSelected(null)}>Cancel</button>
-              <button className="btn btn-sm btn-purple" onClick={saveUpdate} disabled={saving}>{saving?"Saving...":"Save Update"}</button>
-            </div>
+          )}
+          <div className="section-label">New Update</div>
+          <div className="field"><label>Status</label>
+            <select value={updateForm.status} onChange={e=>setUpdateForm({...updateForm,status:e.target.value})}>
+              <option value="PENDING">Pending</option>
+              <option value="PICKED_UP">Picked Up for Interview</option>
+              <option value="REJECTED">Rejected</option>
+              <option value="HIRED">Hired</option>
+            </select>
           </div>
-        </div>
+          <div className="field"><label>Comment</label><textarea rows="3" style={{resize:"vertical"}} placeholder="Notes about this candidate..." value={updateForm.comment} onChange={e=>setUpdateForm({...updateForm,comment:e.target.value})}/></div>
+          <div style={{fontSize:12,color:T.muted}}>Saving as: <strong>{getEmail()}</strong></div>
+        </Modal>
       )}
     </div>
   );
 }
 
 // ================================================
-// DND
+// DND LIST
 // ================================================
 function DndList({ showToast }) {
-  const [dnd,setDnd]=useState([]);
-  const [phone,setPhone]=useState("");
-  const [adding,setAdding]=useState(false);
-
+  const [dnd,setDnd]=useState([]);const [phone,setPhone]=useState("");const [adding,setAdding]=useState(false);
   useEffect(()=>{load();},[]);
-  async function load(){try{const d=await dbSelect("dnd_list","?select=*&order=added_at.desc");setDnd(d);}catch(e){showToast("Failed to load DND","error");}}
+  async function load(){try{setDnd(await dbSelect("dnd_list","?select=*&order=added_at.desc"));}catch{showToast("Failed","error");}}
   async function addDnd(){
     const clean=phone.replace(/\D/g,"");
     if(!clean||clean.length!==10){showToast("Enter a valid 10-digit number","error");return;}
     setAdding(true);
-    try{await dbInsert("dnd_list",{phone:clean,reason:"MANUAL"});showToast(`${clean} added to DND`,"success");setPhone("");load();}
-    catch(e){showToast("Already in DND or failed","error");}
+    try{await dbInsert("dnd_list",{phone:clean,reason:"MANUAL"});showToast(`${clean} blocked`,"success");setPhone("");load();}
+    catch{showToast("Already in DND or failed","error");}
     finally{setAdding(false);}
   }
-  async function removeDnd(p){
-    try{await dbDelete("dnd_list",`phone=eq.${p}`);showToast(`${p} removed from DND`,"success");load();}
-    catch(e){showToast("Failed to remove","error");}
-  }
-
+  async function remove(p){try{await dbDelete("dnd_list",`phone=eq.${p}`);showToast("Removed","success");load();}catch{showToast("Failed","error");}}
   return(
     <div>
-      <div className="page-header"><div><div className="page-title">DND List</div><div className="page-sub">Numbers blocked from all campaigns. Not Interested responses auto-added.</div></div></div>
+      <div className="page-header"><div><div className="page-title">DND List</div><div className="page-sub">Blocked numbers — Not Interested responses auto-added</div></div></div>
       <div className="page-content">
         <div className="card">
-          <div className="card-header"><div className="card-title">Add to DND</div></div>
+          <div className="card-header"><div className="card-title">Block a Number</div></div>
           <div className="card-body">
             <div className="input-row">
-              <div className="field"><label>Phone Number (10 digits)</label><input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="9876543210" onKeyDown={e=>e.key==="Enter"&&addDnd()}/></div>
-              <button className="btn btn-sm btn-danger" onClick={addDnd} disabled={adding}>{adding?"Adding...":"Block Number"}</button>
+              <div className="field"><label>Phone Number</label><input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="9876543210" onKeyDown={e=>e.key==="Enter"&&addDnd()}/></div>
+              <button className="btn btn-sm btn-danger" onClick={addDnd} disabled={adding}>{adding?"Adding...":"Block"}</button>
             </div>
           </div>
         </div>
         <div className="card">
           <div className="card-header"><div className="card-title">Blocked Numbers ({dnd.length})</div><button className="btn btn-sm btn-ghost" onClick={load}>↻</button></div>
           <div className="table-wrap">
-            {dnd.length===0?<div className="empty-state"><div className="empty-state-icon">🚫</div><div className="empty-state-text">No numbers blocked</div></div>:(
+            {dnd.length===0?<div className="empty-state"><div className="empty-icon">🚫</div><div className="empty-title">No numbers blocked</div></div>:(
               <table>
-                <thead><tr><th>Phone</th><th>Reason</th><th>Added</th><th>Action</th></tr></thead>
+                <thead><tr><th>Phone</th><th>Reason</th><th>Added</th><th></th></tr></thead>
                 <tbody>{dnd.map(d=>(
                   <tr key={d.id}>
                     <td style={{fontFamily:"monospace"}}>{d.phone}</td>
                     <td><DisposBadge sub={d.reason==="NOT_INTERESTED"?"NOT_INTERESTED":"MANUAL"}/></td>
                     <td style={{color:T.muted,fontSize:12}}>{new Date(d.added_at).toLocaleDateString("en-IN")}</td>
-                    <td><button className="btn btn-sm btn-ghost" onClick={()=>removeDnd(d.phone)}>Remove</button></td>
+                    <td><button className="btn btn-sm btn-ghost" onClick={()=>remove(d.phone)}>Remove</button></td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -1097,30 +1008,26 @@ function DndList({ showToast }) {
 // CALLER IDS
 // ================================================
 function CallerIds({ showToast }) {
-  const [callerIds,setCallerIds]=useState([]);
-  const [number,setNumber]=useState("");const [label,setLabel]=useState("");const [adding,setAdding]=useState(false);
-
+  const [list,setList]=useState([]);const [number,setNumber]=useState("");const [label,setLabel]=useState("");const [adding,setAdding]=useState(false);
   useEffect(()=>{load();},[]);
-  async function load(){try{const d=await dbSelect("caller_ids","?select=*&order=added_at.desc");setCallerIds(d);}catch(e){showToast("Failed to load","error");}}
+  async function load(){try{setList(await dbSelect("caller_ids","?select=*&order=added_at.desc"));}catch{}}
   async function add(){
-    const clean=number.replace(/\s/g,"");
-    if(!clean){showToast("Enter a phone number","error");return;}
+    const clean=number.replace(/\s/g,"");if(!clean){showToast("Enter a number","error");return;}
     setAdding(true);
-    try{await dbInsert("caller_ids",{number:clean,label:label||clean,is_active:true});showToast("Caller ID added","success");setNumber("");setLabel("");load();}
-    catch(e){showToast("Already exists or failed","error");}
+    try{await dbInsert("caller_ids",{number:clean,label:label||clean,is_active:true});showToast("Added","success");setNumber("");setLabel("");load();}
+    catch{showToast("Already exists or failed","error");}
     finally{setAdding(false);}
   }
-  async function toggleActive(id,current){try{await dbUpdate("caller_ids",`id=eq.${id}`,{is_active:!current});load();}catch(e){showToast("Failed","error");}}
-  async function remove(id){try{await dbDelete("caller_ids",`id=eq.${id}`);showToast("Removed","success");load();}catch(e){showToast("Failed","error");}}
-
+  async function toggle(id,cur){try{await dbUpdate("caller_ids",`id=eq.${id}`,{is_active:!cur});load();}catch{showToast("Failed","error");}}
+  async function remove(id){try{await dbDelete("caller_ids",`id=eq.${id}`);showToast("Removed","success");load();}catch{showToast("Failed","error");}}
   return(
     <div>
       <div className="page-header"><div><div className="page-title">Caller IDs</div><div className="page-sub">Manage outbound phone numbers</div></div></div>
       <div className="page-content">
         <div className="card">
-          <div className="card-header"><div className="card-title">Add Caller ID</div></div>
+          <div className="card-header"><div className="card-title">Add Number</div></div>
           <div className="card-body">
-            <div className="two-col">
+            <div className="two-col" style={{marginBottom:12}}>
               <div className="field"><label>Number (with country code)</label><input value={number} onChange={e=>setNumber(e.target.value)} placeholder="+918071579999"/></div>
               <div className="field"><label>Label</label><input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Primary Number"/></div>
             </div>
@@ -1128,18 +1035,18 @@ function CallerIds({ showToast }) {
           </div>
         </div>
         <div className="card">
-          <div className="card-header"><div className="card-title">Your Numbers ({callerIds.length})</div><button className="btn btn-sm btn-ghost" onClick={load}>↻</button></div>
+          <div className="card-header"><div className="card-title">Your Numbers</div><button className="btn btn-sm btn-ghost" onClick={load}>↻</button></div>
           <div className="table-wrap">
-            {callerIds.length===0?<div className="empty-state"><div className="empty-state-icon">📱</div><div className="empty-state-text">No caller IDs yet</div></div>:(
+            {list.length===0?<div className="empty-state"><div className="empty-icon">📱</div><div className="empty-title">No numbers yet</div></div>:(
               <table>
                 <thead><tr><th>Number</th><th>Label</th><th>Status</th><th>Actions</th></tr></thead>
-                <tbody>{callerIds.map(c=>(
+                <tbody>{list.map(c=>(
                   <tr key={c.id}>
                     <td style={{fontFamily:"monospace"}}>{c.number}</td>
                     <td>{c.label}</td>
                     <td><span className={`badge ${c.is_active?"badge-green":"badge-gray"}`}>{c.is_active?"Active":"Inactive"}</span></td>
-                    <td style={{display:"flex",gap:8}}>
-                      <button className="btn btn-sm btn-ghost" onClick={()=>toggleActive(c.id,c.is_active)}>{c.is_active?"Deactivate":"Activate"}</button>
+                    <td style={{display:"flex",gap:6}}>
+                      <button className="btn btn-sm btn-ghost" onClick={()=>toggle(c.id,c.is_active)}>{c.is_active?"Deactivate":"Activate"}</button>
                       <button className="btn btn-sm btn-danger" onClick={()=>remove(c.id)}>Remove</button>
                     </td>
                   </tr>
@@ -1157,34 +1064,28 @@ function CallerIds({ showToast }) {
 // AUDIO MANAGER
 // ================================================
 function AudioManager({ showToast }) {
-  const [audioFiles,setAudioFiles]=useState([]);
-  const [editing,setEditing]=useState(null);
-  const [newUrl,setNewUrl]=useState("");
-  const [saving,setSaving]=useState(false);
-
+  const [files,setFiles]=useState([]);const [editing,setEditing]=useState(null);const [newUrl,setNewUrl]=useState("");const [saving,setSaving]=useState(false);
   useEffect(()=>{load();},[]);
-  async function load(){try{const d=await dbSelect("audio_files","?select=*&order=key");setAudioFiles(d);}catch(e){showToast("Failed to load audio","error");}}
-  async function saveUrl(){
-    if(!newUrl.trim())return;
+  async function load(){try{setFiles(await dbSelect("audio_files","?select=*&order=key"));}catch{showToast("Failed","error");}}
+  async function save(){
     setSaving(true);
     try{await dbUpdate("audio_files",`key=eq.${editing.key}`,{url:newUrl.trim(),updated_at:new Date().toISOString()});showToast(`${editing.label} updated`,"success");setEditing(null);setNewUrl("");load();}
-    catch(e){showToast("Failed to save","error");}
+    catch{showToast("Failed","error");}
     finally{setSaving(false);}
   }
-
   return(
     <div>
-      <div className="page-header"><div><div className="page-title">Audio Manager</div><div className="page-sub">Update IVR audio files — changes go live instantly</div></div></div>
+      <div className="page-header"><div><div className="page-title">Audio Manager</div><div className="page-sub">Update IVR audio — changes go live instantly, no restart needed</div></div></div>
       <div className="page-content">
         <div className="card">
           <div className="card-header"><div className="card-title">IVR Audio Files</div></div>
           <div className="card-body">
-            {audioFiles.map(af=>(
-              <div key={af.key} className="audio-row">
-                <div><div className="audio-label">{af.label}</div><div className="audio-key">{af.key}</div></div>
-                <div className="audio-actions">
-                  {af.url&&!af.url.includes("YOUR_")&&<audio controls style={{height:32}} src={af.url}/>}
-                  <button className="btn btn-sm btn-ghost" onClick={()=>{setEditing(af);setNewUrl(af.url);}}>✏️ Replace</button>
+            {files.map(f=>(
+              <div key={f.key} className="audio-row">
+                <div><div style={{fontWeight:500,fontSize:14}}>{f.label}</div><div style={{fontSize:11,color:T.muted,fontFamily:"monospace"}}>{f.key}</div></div>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  {f.url&&!f.url.includes("YOUR_")&&<audio controls style={{height:30}} src={f.url}/>}
+                  <button className="btn btn-sm btn-ghost" onClick={()=>{setEditing(f);setNewUrl(f.url);}}>✏️ Replace</button>
                 </div>
               </div>
             ))}
@@ -1192,125 +1093,102 @@ function AudioManager({ showToast }) {
         </div>
       </div>
       {editing&&(
-        <div className="modal-overlay" onClick={()=>setEditing(null)}>
-          <div className="modal" onClick={e=>e.stopPropagation()}>
-            <div className="modal-title">Replace: {editing.label}</div>
-            <div className="modal-sub">Paste the new Cloudinary URL. Goes live immediately.</div>
-            <div className="field"><label>New Audio URL</label><input value={newUrl} onChange={e=>setNewUrl(e.target.value)} placeholder="https://res.cloudinary.com/..."/></div>
-            {newUrl&&<audio controls src={newUrl} style={{width:"100%",marginTop:10}}/>}
-            <div className="modal-actions">
-              <button className="btn btn-sm btn-ghost" onClick={()=>setEditing(null)}>Cancel</button>
-              <button className="btn btn-sm" disabled={saving||!newUrl.trim()} onClick={saveUrl}>{saving?"Saving...":"Save & Go Live"}</button>
-            </div>
-          </div>
-        </div>
+        <Modal title={`Replace: ${editing.label}`} sub="Paste Cloudinary URL. Goes live immediately after save." onClose={()=>setEditing(null)}
+          actions={<><button className="btn btn-sm btn-ghost" onClick={()=>setEditing(null)}>Cancel</button><button className="btn btn-sm" disabled={saving||!newUrl.trim()} onClick={save}>{saving?"Saving...":"Save & Go Live"}</button></>}>
+          <div className="field"><label>New Audio URL</label><input value={newUrl} onChange={e=>setNewUrl(e.target.value)} placeholder="https://res.cloudinary.com/..."/></div>
+          {newUrl&&<audio controls src={newUrl} style={{width:"100%",marginTop:10}}/>}
+        </Modal>
       )}
     </div>
   );
 }
 
 // ================================================
-// CALL LOGS + REPORTS
+// CALL LOGS
 // ================================================
 function CallLogs({ showToast }) {
-  const [logs,setLogs]=useState([]);
-  const [loading,setLoading]=useState(false);
-  const [filterDisposition,setFilterDisposition]=useState("ALL");
-  const [filterCampaign,setFilterCampaign]=useState("ALL");
-  const [startDate,setStartDate]=useState("");
-  const [endDate,setEndDate]=useState("");
-  const [rowLimit,setRowLimit]=useState("ALL");
-  const [campaigns,setCampaigns]=useState([]);
+  const [logs,setLogs]=useState([]);const [loading,setLoading]=useState(false);
+  const [fd,setFd]=useState("");const [td,setTd]=useState("");
+  const [fc,setFc]=useState("ALL");const [fds,setFds]=useState("ALL");
+  const [limit,setLimit]=useState("ALL");const [campaigns,setCampaigns]=useState([]);
 
-  useEffect(()=>{loadLogs();},[]);
+  useEffect(()=>{load();},[]);
 
-  async function loadLogs(){
+  async function load(){
     setLoading(true);
     try{
       const data=await dbSelect("call_logs","?select=*&order=logged_at.desc&limit=2000");
-      setLogs(data);
-      setCampaigns([...new Set(data.map(l=>l.campaign).filter(Boolean))]);
-    }catch(e){showToast("Failed to load logs","error");}
+      setLogs(data);setCampaigns([...new Set(data.map(l=>l.campaign).filter(Boolean))]);
+    }catch{showToast("Failed","error");}
     finally{setLoading(false);}
   }
 
   const filtered=logs.filter(l=>{
-    const dMatch=filterDisposition==="ALL"||l.sub_disposition===filterDisposition;
-    const cMatch=filterCampaign==="ALL"||l.campaign===filterCampaign;
+    const cM=fc==="ALL"||l.campaign===fc;
+    const dM=fds==="ALL"||l.sub_disposition===fds;
     const date=new Date(l.logged_at);
-    const sMatch=!startDate||date>=new Date(startDate);
-    const eMatch=!endDate||date<=new Date(endDate+"T23:59:59");
-    return dMatch&&cMatch&&sMatch&&eMatch;
+    const sM=!fd||date>=new Date(fd);
+    const eM=!td||date<=new Date(td+"T23:59:59");
+    return cM&&dM&&sM&&eM;
   });
+  const display=limit==="ALL"?filtered:filtered.slice(0,parseInt(limit));
 
-  const displayRows=rowLimit==="ALL"?filtered:filtered.slice(0,parseInt(rowLimit));
-
-  const summary=filtered.reduce((acc,l)=>{if(!acc[l.sub_disposition])acc[l.sub_disposition]=0;acc[l.sub_disposition]++;return acc;},{});
-
-  function doExport(limit){
-    const rows=(limit==="ALL"?filtered:filtered.slice(0,parseInt(limit))).map(l=>[
-      l.phone,l.campaign,l.main_disposition,l.sub_disposition,new Date(l.logged_at).toLocaleString("en-IN")
-    ]);
-    const fname=`vcatch_report_${filterCampaign}_${startDate||"all"}_to_${endDate||"all"}_${Date.now()}.csv`;
-    downloadCSV(fname,["Phone","Campaign","Main Disposition","Sub Disposition","Date & Time"],rows);
-    showToast(`Exported ${rows.length} rows`,"success");
+  function doExport(){
+    downloadCSV(`vcatch_logs_${fc}_${Date.now()}.csv`,["Phone","Campaign","Main","Disposition","Date"],display.map(l=>[l.phone,l.campaign,l.main_disposition,l.sub_disposition,new Date(l.logged_at).toLocaleString("en-IN")]));
+    showToast(`Exported ${display.length} rows`,"success");
   }
 
+  const summary=filtered.reduce((a,l)=>{a[l.sub_disposition]=(a[l.sub_disposition]||0)+1;return a;},{});
   const dispositions=["INTERESTED","NOT_INTERESTED","NO_RESPONSE","INVALID_INPUT","BUSY","FAILED","CALL_DISCONNECTED"];
 
   return(
     <div>
       <div className="page-header">
         <div><div className="page-title">Call Logs & Reports</div><div className="page-sub">{filtered.length} records match filters</div></div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          <select className="filter-select" value={rowLimit} onChange={e=>setRowLimit(e.target.value)}>
-            <option value="50">Download 50</option>
-            <option value="100">Download 100</option>
-            <option value="500">Download 500</option>
-            <option value="ALL">Download All</option>
+        <div style={{display:"flex",gap:8}}>
+          <select className="filter-select" value={limit} onChange={e=>setLimit(e.target.value)}>
+            <option value="50">50 rows</option><option value="100">100 rows</option>
+            <option value="500">500 rows</option><option value="ALL">All rows</option>
           </select>
-          <button className="btn btn-sm btn-ghost" onClick={()=>doExport(rowLimit)}>↓ Export</button>
+          <button className="btn btn-sm btn-ghost" onClick={doExport}>↓ Export</button>
         </div>
       </div>
       <div className="page-content">
-        {filterCampaign!=="ALL"&&(
+        {fc!=="ALL"&&(
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
-            {[["INTERESTED",T.green],["NOT_INTERESTED",T.red],["BUSY",T.amber],["FAILED",T.muted]].map(([key,color])=>(
-              <div key={key} className="stat-card">
-                <div className="stat-label">{key.replace(/_/g," ")}</div>
-                <div className="stat-value" style={{color,fontSize:22}}>{summary[key]||0}</div>
-                <div className="stat-sub">{filtered.length?`${Math.round(((summary[key]||0)/filtered.length)*100)}%`:"0%"}</div>
+            {[["INTERESTED",T.green],["NOT_INTERESTED",T.red],["BUSY",T.amber],["FAILED",T.muted]].map(([k,c])=>(
+              <div key={k} className="kpi-card">
+                <div className="kpi-label">{k.replace(/_/g," ")}</div>
+                <div className="kpi-value" style={{color:c,fontSize:22}}>{summary[k]||0}</div>
+                <div className="kpi-sub">{filtered.length?`${Math.round(((summary[k]||0)/filtered.length)*100)}%`:""}</div>
               </div>
             ))}
           </div>
         )}
-
-        <div className="filter-row">
-          <select className="filter-select" value={filterCampaign} onChange={e=>setFilterCampaign(e.target.value)}>
+        <div className="filter-row" style={{marginBottom:16}}>
+          <select className="filter-select" value={fc} onChange={e=>setFc(e.target.value)}>
             <option value="ALL">All Campaigns</option>
             {campaigns.map(c=><option key={c} value={c}>{c}</option>)}
           </select>
-          <select className="filter-select" value={filterDisposition} onChange={e=>setFilterDisposition(e.target.value)}>
+          <select className="filter-select" value={fds} onChange={e=>setFds(e.target.value)}>
             <option value="ALL">All Dispositions</option>
             {dispositions.map(d=><option key={d} value={d}>{d.replace(/_/g," ")}</option>)}
           </select>
-          <input type="date" className="filter-input" value={startDate} onChange={e=>setStartDate(e.target.value)} title="Start date"/>
-          <input type="date" className="filter-input" value={endDate} onChange={e=>setEndDate(e.target.value)} title="End date"/>
-          {(startDate||endDate)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setStartDate("");setEndDate("");}}>✕ Clear dates</button>}
-          <button className="btn btn-sm btn-ghost" onClick={loadLogs}>↻</button>
+          <input type="date" className="filter-input" value={fd} onChange={e=>setFd(e.target.value)}/>
+          <span style={{color:T.muted,fontSize:12}}>to</span>
+          <input type="date" className="filter-input" value={td} onChange={e=>setTd(e.target.value)}/>
+          {(fd||td)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setFd("");setTd("");}}>✕</button>}
+          <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
         </div>
-
         <div className="card">
-          <div className="card-header">
-            <div className="card-title">Showing {displayRows.length} of {filtered.length} records</div>
-          </div>
+          <div className="card-header"><div className="card-title">Showing {display.length} of {filtered.length}</div></div>
           <div className="table-wrap">
-            {loading?<div className="empty-state">Loading...</div>:displayRows.length===0?(
-              <div className="empty-state"><div className="empty-state-icon">📋</div><div className="empty-state-text">No logs match filters</div></div>
+            {loading?<div className="empty-state">Loading...</div>:display.length===0?(
+              <div className="empty-state"><div className="empty-icon">📋</div><div className="empty-title">No logs match</div></div>
             ):(
               <table>
                 <thead><tr><th>Phone</th><th>Campaign</th><th>Status</th><th>Disposition</th><th>Time</th></tr></thead>
-                <tbody>{displayRows.map(log=>(
+                <tbody>{display.map(log=>(
                   <tr key={log.id}>
                     <td style={{fontFamily:"monospace"}}>{log.phone}</td>
                     <td><span className="tag">{log.campaign}</span></td>
@@ -1329,61 +1207,55 @@ function CallLogs({ showToast }) {
 }
 
 // ================================================
-// MAIN APP
-// ================================================
-// ================================================
-// USER MANAGEMENT (Admin only)
+// USER MANAGEMENT
 // ================================================
 function UserManagement({ showToast }) {
-  const [users,setUsers]=useState([]);
-  const [loading,setLoading]=useState(false);
-  const [form,setForm]=useState({email:"",role:"HR",name:""});
-  const [adding,setAdding]=useState(false);
+  const [users,setUsers]=useState([]);const [loading,setLoading]=useState(false);
+  const [form,setForm]=useState({email:"",name:"",role:"HR",password:""});
+  const [adding,setAdding]=useState(false);const [resetting,setResetting]=useState(null);
 
   useEffect(()=>{load();},[]);
+  async function load(){setLoading(true);try{setUsers(await dbSelect("user_roles","?select=*&order=created_at.desc"));}catch{showToast("Failed","error");}finally{setLoading(false);}}
 
-  async function load(){
-    setLoading(true);
-    try{const d=await dbSelect("user_roles","?select=*&order=created_at.desc");setUsers(d);}
-    catch(e){showToast("Failed to load users","error");}
-    finally{setLoading(false);}
-  }
-
-  async function addUser(){
-    if(!form.email.trim()){showToast("Email required","error");return;}
+  async function createUser(){
+    if(!form.email||!form.password){showToast("Email and password required","error");return;}
+    if(form.password.length<8){showToast("Password must be at least 8 characters","error");return;}
     setAdding(true);
     try{
-      await dbInsert("user_roles",{email:form.email.trim().toLowerCase(),role:form.role,name:form.name||form.email});
-      showToast(`${form.email} added as ${form.role}`,"success");
-      setForm({email:"",role:"HR",name:""});load();
-    }catch(e){showToast("Failed — email may already exist","error");}
+      await renderFetch("/auth/create-user",{method:"POST",body:JSON.stringify(form)});
+      showToast(`✅ ${form.email} created. Reset email sent.`,"success");
+      setForm({email:"",name:"",role:"HR",password:""});load();
+    }catch(e){showToast(e.message||"Failed to create user","error");}
     finally{setAdding(false);}
   }
 
-  async function updateRole(id,role){
-    try{await dbUpdate("user_roles",`id=eq.${id}`,{role});showToast("Role updated","success");load();}
-    catch(e){showToast("Failed","error");}
+  async function resetPassword(email){
+    setResetting(email);
+    try{
+      await renderFetch("/auth/reset-password",{method:"POST",body:JSON.stringify({email})});
+      showToast(`Reset email sent to ${email}`,"success");
+    }catch(e){showToast(e.message||"Failed","error");}
+    finally{setResetting(null);}
   }
 
-  async function toggleActive(id,current){
-    try{await dbUpdate("user_roles",`id=eq.${id}`,{is_active:!current});load();}
-    catch(e){showToast("Failed","error");}
-  }
+  async function updateRole(id,role){try{await dbUpdate("user_roles",`id=eq.${id}`,{role});showToast("Role updated","success");load();}catch{showToast("Failed","error");}}
+  async function toggleActive(id,cur){try{await dbUpdate("user_roles",`id=eq.${id}`,{is_active:!cur});load();}catch{showToast("Failed","error");}}
 
   const roleColors={ADMIN:T.red,MANAGER:T.accent,HR:T.green};
 
   return(
     <div>
-      <div className="page-header">
-        <div><div className="page-title">User Management</div><div className="page-sub">Manage portal access and roles</div></div>
-      </div>
+      <div className="page-header"><div><div className="page-title">User Management</div><div className="page-sub">Create accounts, assign roles, reset passwords</div></div></div>
       <div className="page-content">
         <div className="card">
-          <div className="card-header"><div className="card-title">Add User</div></div>
+          <div className="card-header"><div className="card-title">Create New User</div></div>
           <div className="card-body">
-            <div className="three-col" style={{marginBottom:12}}>
-              <div className="field"><label>Email *</label><input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="hr@company.com"/></div>
-              <div className="field"><label>Name</label><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Full name"/></div>
+            <div className="two-col" style={{marginBottom:12}}>
+              <div className="field"><label>Full Name</label><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Full name"/></div>
+              <div className="field"><label>Email *</label><input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="hr@company.com"/></div>
+            </div>
+            <div className="two-col" style={{marginBottom:12}}>
+              <div className="field"><label>Temporary Password *</label><input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Min 8 characters"/></div>
               <div className="field"><label>Role</label>
                 <select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>
                   <option value="HR">HR</option>
@@ -1392,35 +1264,35 @@ function UserManagement({ showToast }) {
                 </select>
               </div>
             </div>
-            <div style={{background:T.amberDim,border:`1px solid ${T.amber}`,borderRadius:6,padding:"8px 12px",fontSize:12,color:T.amber,marginBottom:12}}>
-              ⚠️ After adding, invite via <strong>Supabase → Authentication → Users → Invite user</strong> so they can set a password.
-            </div>
-            <button className="btn btn-sm" onClick={addUser} disabled={adding}>{adding?"Adding...":"Add User"}</button>
+            <div className="info-box amber" style={{marginBottom:12}}>⚠️ A password reset email will be sent automatically so the user can set their own password.</div>
+            <button className="btn btn-sm" onClick={createUser} disabled={adding}>{adding?"Creating...":"Create User & Send Email"}</button>
           </div>
         </div>
+
         <div className="card">
           <div className="card-header"><div className="card-title">All Users ({users.length})</div><button className="btn btn-sm btn-ghost" onClick={load}>↻</button></div>
           <div className="table-wrap">
-            {loading?<div className="empty-state">Loading...</div>:users.length===0?<div className="empty-state"><div className="empty-state-icon">👤</div><div className="empty-state-text">No users</div></div>:(
+            {loading?<div className="empty-state">Loading...</div>:users.length===0?<div className="empty-state"><div className="empty-icon">👤</div><div className="empty-title">No users</div></div>:(
               <table>
-                <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Change Role</th><th>Actions</th></tr></thead>
                 <tbody>{users.map(u=>(
                   <tr key={u.id}>
                     <td style={{fontWeight:500}}>{u.name||"—"}</td>
                     <td style={{fontFamily:"monospace",fontSize:12}}>{u.email}</td>
                     <td><span className="badge" style={{background:`${roleColors[u.role]||T.muted}22`,color:roleColors[u.role]||T.muted}}>{u.role}</span></td>
                     <td><span className={`badge ${u.is_active?"badge-green":"badge-gray"}`}>{u.is_active?"Active":"Inactive"}</span></td>
-                    <td style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    <td>
                       {u.email!==getEmail()?(
-                        <>
-                          <select className="filter-select" value={u.role} onChange={e=>updateRole(u.id,e.target.value)} style={{padding:"4px 8px",fontSize:12}}>
-                            <option value="HR">HR</option>
-                            <option value="MANAGER">Manager</option>
-                            <option value="ADMIN">Admin</option>
-                          </select>
-                          <button className="btn btn-sm btn-ghost" onClick={()=>toggleActive(u.id,u.is_active)}>{u.is_active?"Deactivate":"Activate"}</button>
-                        </>
+                        <select className="filter-select" value={u.role} onChange={e=>updateRole(u.id,e.target.value)} style={{padding:"4px 8px",fontSize:12}}>
+                          <option value="HR">HR</option><option value="MANAGER">Manager</option><option value="ADMIN">Admin</option>
+                        </select>
                       ):<span style={{fontSize:12,color:T.muted}}>You</span>}
+                    </td>
+                    <td>
+                      <div style={{display:"flex",gap:6}}>
+                        <button className="btn btn-sm btn-ghost" onClick={()=>resetPassword(u.email)} disabled={resetting===u.email}>{resetting===u.email?"Sending...":"📧 Reset Password"}</button>
+                        {u.email!==getEmail()&&<button className="btn btn-sm btn-ghost" onClick={()=>toggleActive(u.id,u.is_active)}>{u.is_active?"Deactivate":"Activate"}</button>}
+                      </div>
                     </td>
                   </tr>
                 ))}</tbody>
@@ -1428,17 +1300,18 @@ function UserManagement({ showToast }) {
             )}
           </div>
         </div>
+
         <div className="card">
           <div className="card-header"><div className="card-title">Role Permissions</div></div>
           <div className="card-body">
             <table>
-              <thead><tr><th>Feature</th><th style={{color:T.red}}>Admin</th><th style={{color:T.accent}}>Manager</th><th style={{color:T.green}}>HR</th></tr></thead>
+              <thead><tr><th>Feature</th><th style={{color:T.red,textAlign:"center"}}>Admin</th><th style={{color:T.accent,textAlign:"center"}}>Manager</th><th style={{color:T.green,textAlign:"center"}}>HR</th></tr></thead>
               <tbody>{[
-                ["Dashboard & Logs","✓","✓","✓"],
+                ["Dashboard & Call Logs","✓","✓","✓"],
                 ["Upload Leads","✓","✓","✓"],
                 ["Candidate Updates","✓","✓","✓"],
-                ["Start/Pause Campaigns","✓","✓","✗"],
-                ["Create/Delete Campaigns","✓","✓","✗"],
+                ["Start / Pause Campaigns","✓","✓","✗"],
+                ["Create / Delete Campaigns","✓","✓","✗"],
                 ["Audio Manager","✓","✓","✗"],
                 ["Caller IDs & DND","✓","✓","✗"],
                 ["User Management","✓","✗","✗"],
@@ -1458,17 +1331,29 @@ function UserManagement({ showToast }) {
   );
 }
 
+// ================================================
+// MAIN APP
+// ================================================
 export default function App() {
   const [session,setSession]=useState(()=>{try{return JSON.parse(localStorage.getItem("sb_session"));}catch{return null;}});
   const [page,setPage]=useState("dashboard");
   const [toast,setToast]=useState(null);
   const [role,setRole]=useState(()=>getRole());
+  const [isDark,setIsDark]=useState(()=>localStorage.getItem("theme")!=="light");
+
+  // Apply theme globally
+  useEffect(()=>{
+    T = isDark ? DARK : LIGHT;
+    localStorage.setItem("theme", isDark?"dark":"light");
+    // Force re-render by updating CSS
+    const styleEl = document.getElementById("vcatch-theme");
+    if(styleEl) styleEl.textContent = getThemeCSS(T);
+  },[isDark]);
 
   function showToast(msg,type="info"){setToast({msg,type});}
 
   async function handleLogin(s){
     setSession(s);
-    // Small delay to ensure role is cached
     setTimeout(()=>setRole(getRole()),100);
   }
 
@@ -1478,7 +1363,14 @@ export default function App() {
     setRole("HR");
   }
 
-  if(!session)return<><style>{css}</style><LoginPage onLogin={handleLogin}/></>;
+  function toggleTheme(){setIsDark(d=>!d);}
+
+  if(!session) return (
+    <>
+      <style id="vcatch-theme">{getThemeCSS(isDark?DARK:LIGHT)}</style>
+      <LoginPage onLogin={handleLogin}/>
+    </>
+  );
 
   const allNav=[
     {id:"dashboard",label:"Dashboard",icon:"📊",roles:["ADMIN","MANAGER","HR"]},
@@ -1493,16 +1385,22 @@ export default function App() {
   ];
 
   const nav=allNav.filter(n=>n.roles.includes(role));
-  const roleColor={ADMIN:T.red,MANAGER:T.accent,HR:T.green};
+  const roleColor={ADMIN:"#EF4444",MANAGER:"#3B7AF8",HR:"#10B981"};
   const roleLabel={ADMIN:"Admin",MANAGER:"HR Manager",HR:"HR"};
+  const T_cur = isDark ? DARK : LIGHT;
 
   return(
     <>
-      <style>{css}</style>
+      <style id="vcatch-theme">{getThemeCSS(T_cur)}</style>
       <div className="app">
+        {/* SIDEBAR */}
         <div className="sidebar">
-          <div className="sidebar-brand">VCatch<span>HR Portal</span></div>
+          <div className="sidebar-header">
+            <div className="sidebar-brand">🎯 VCatch</div>
+            <div className="sidebar-tagline">HR IVR Portal</div>
+          </div>
           <nav className="nav">
+            <div className="nav-section">Menu</div>
             {nav.map(n=>(
               <div key={n.id} className={`nav-item ${page===n.id?"active":""}`} onClick={()=>setPage(n.id)}>
                 <span className="nav-icon">{n.icon}</span>{n.label}
@@ -1510,12 +1408,23 @@ export default function App() {
             ))}
           </nav>
           <div className="sidebar-footer">
-            <div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{getRoleName()}</div>
-            <div style={{fontSize:11,color:T.muted,marginBottom:6,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{session?.user?.email}</div>
-            <span className="badge" style={{background:`${roleColor[role]||T.muted}22`,color:roleColor[role]||T.muted,fontSize:10,marginBottom:10,display:"inline-block"}}>{roleLabel[role]||role}</span>
-            <button className="btn btn-sm btn-ghost" style={{width:"100%",marginTop:8}} onClick={handleLogout}>Sign out</button>
+            <div className="user-card">
+              <div className="user-name">{getRoleName()}</div>
+              <div className="user-email">{session?.user?.email}</div>
+              <div style={{marginTop:6}}>
+                <span className="badge" style={{background:`${roleColor[role]||"#718096"}22`,color:roleColor[role]||"#718096",fontSize:10}}>
+                  {roleLabel[role]||role}
+                </span>
+              </div>
+            </div>
+            <button className="theme-toggle btn-full" style={{marginBottom:8,width:"100%",justifyContent:"center"}} onClick={toggleTheme}>
+              {isDark?"☀️ Light Mode":"🌙 Dark Mode"}
+            </button>
+            <button className="btn btn-sm btn-ghost btn-full" onClick={handleLogout}>Sign out</button>
           </div>
         </div>
+
+        {/* MAIN CONTENT */}
         <div className="main">
           {page==="dashboard"&&<Dashboard showToast={showToast} role={role}/>}
           {page==="campaigns"&&["ADMIN","MANAGER"].includes(role)&&<Campaigns showToast={showToast}/>}
