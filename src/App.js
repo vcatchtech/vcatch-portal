@@ -351,7 +351,7 @@ function Dashboard({ showToast, role }) {
     if(!testPhone.trim()){showToast("Enter a phone number","error");return;}
     setTestLoading(true);
     try{
-      await renderFetch("/test-call",{method:"POST",body:JSON.stringify({phone:testPhone.trim(),campaign:"TEST"})});
+      await renderFetch("/test-call",{method:"POST",body:JSON.stringify({phone:testPhone.trim(),campaign:"TEST",bypass_dnd:true})});
       showToast(`Test call sent to ${testPhone}`,"success");setTestPhone("");
     }catch(e){showToast(e.message||"Test call failed","error");}
     finally{setTestLoading(false);}
@@ -592,6 +592,7 @@ function Leads({ showToast }) {
   const [validRows,setValidRows]=useState([]);
   const [rejectedRows,setRejectedRows]=useState([]);
   const [dndConflicts,setDndConflicts]=useState([]);
+  const [duplicates,setDuplicates]=useState([]);
   const [campaign,setCampaign]=useState("");
   const [selectedCampaignData,setSelectedCampaignData]=useState(null);
   const [filterCampaign,setFilterCampaign]=useState("ALL");
@@ -660,22 +661,52 @@ function Leads({ showToast }) {
     const camp=campaigns.find(c=>c.name===campaign);
     if(camp?.status==="RUNNING"){showToast("Pause the campaign first before adding leads","error");return;}
     setUploading(true);
+
     try{
+      // Check for existing leads in this campaign (duplicate detection)
+      const existingRes=await dbSelect("leads",`?select=phone&campaign=eq.${encodeURIComponent(campaign)}`);
+      const existingPhones=new Set(existingRes.map(r=>r.phone));
+      const duplicates=validRows.filter(r=>existingPhones.has(r.phone));
+      const fresh=validRows.filter(r=>!existingPhones.has(r.phone));
+
+      if(duplicates.length>0){
+        setDuplicates(duplicates);
+        if(!fresh.length){
+          showToast(`All ${duplicates.length} numbers already exist in this campaign`,"error");
+          setUploading(false);
+          return;
+        }
+        showToast(`${duplicates.length} duplicates skipped, uploading ${fresh.length} new leads`,"warn");
+      }
+
+      if(!fresh.length){setUploading(false);return;}
+
       const now=new Date().toISOString();
-      const payload=validRows.map(r=>({
-        name:r.name,phone:r.phone,campaign,status:"PENDING",
-        attempt_count:0,eligible_at:now,
+      const payload=fresh.map(r=>({
+        name:r.name, phone:r.phone, campaign,
+        status:"PENDING", attempt_count:0, eligible_at:now,
         max_retries:selectedCampaignData?.max_retries||1,
         retry_after_minutes:selectedCampaignData?.retry_after_minutes||30,
       }));
+
       await dbInsert("leads",payload);
-      // Update campaign total_leads count
-      await dbUpdate("campaigns",`name=eq.${encodeURIComponent(campaign)}`,{total_leads:(camp?.total_leads||0)+payload.length,pending_count:(camp?.pending_count||0)+payload.length});
+
+      // Recalculate campaign counts from DB
+      const allLeads=await dbSelect("leads",`?select=status&campaign=eq.${encodeURIComponent(campaign)}`);
+      const total=allLeads.length;
+      const called=allLeads.filter(l=>l.status==="CALLED_FINAL").length;
+      const pending=allLeads.filter(l=>["PENDING","CALLED"].includes(l.status)).length;
+      await dbUpdate("campaigns",`name=eq.${encodeURIComponent(campaign)}`,{total_leads:total,called_count:called,pending_count:pending});
+
       showToast(`${payload.length} leads uploaded to "${campaign}"`,"success");
-      setValidRows([]);setRejectedRows([]);setDndConflicts([]);setCampaign("");setSelectedCampaignData(null);
+      setValidRows([]);setRejectedRows([]);setDndConflicts([]);setDuplicates([]);
+      setCampaign("");setSelectedCampaignData(null);
       fileRef.current.value="";selectedFile.current=null;
       loadLeads();
-    }catch(e){showToast("Upload failed — check for duplicates","error");}
+    }catch(e){
+      console.error(e);
+      showToast("Upload failed: "+e.message,"error");
+    }
     finally{setUploading(false);}
   }
 
@@ -737,6 +768,10 @@ function Leads({ showToast }) {
                   <div style={{background:T.amberDim,border:`1px solid ${T.amber}`,borderRadius:8,padding:12,textAlign:"center"}}>
                     <div style={{fontSize:22,fontWeight:700,color:T.amber}}>{dndConflicts.length}</div>
                     <div style={{fontSize:12,color:T.amber}}>DND — Will be skipped</div>
+                  </div>
+                  <div style={{background:T.purpleDim,border:`1px solid ${T.purple}`,borderRadius:8,padding:12,textAlign:"center"}}>
+                    <div style={{fontSize:22,fontWeight:700,color:T.purple}}>{duplicates.length}</div>
+                    <div style={{fontSize:12,color:T.purple}}>Already in campaign</div>
                   </div>
                 </div>
                 {rejectedRows.length>0&&(
@@ -1334,12 +1369,136 @@ function UserManagement({ showToast }) {
 // ================================================
 // MAIN APP
 // ================================================
+// ================================================
+// PASSWORD RESET PAGE
+// ================================================
+function PasswordResetPage({ onDone }) {
+  const [password,setPassword]=useState("");
+  const [confirm,setConfirm]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState("");
+  const [success,setSuccess]=useState(false);
+
+  const checks = {
+    length: password.length >= 8,
+    upper: /[A-Z]/.test(password),
+    number: /[0-9]/.test(password),
+    special: /[^A-Za-z0-9]/.test(password),
+  };
+  const strength = Object.values(checks).filter(Boolean).length;
+  const strengthLabel = ["","Weak","Fair","Good","Strong"][strength];
+  const strengthColor = ["",T.red,T.amber,T.amber,T.green][strength];
+  const isValid = Object.values(checks).every(Boolean) && password === confirm;
+
+  async function handleReset() {
+    if(!isValid) return;
+    setLoading(true); setError("");
+    try {
+      // Get token from URL hash
+      const hash = window.location.hash.substring(1);
+      const params = new URLSearchParams(hash);
+      const accessToken = params.get("access_token");
+      if(!accessToken) throw new Error("Invalid reset link. Please request a new one.");
+
+      // Update password via Supabase
+      const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json();
+      if(!res.ok) throw new Error(data.message || "Failed to update password");
+
+      // Store password hash history via backend
+      try {
+        await fetch(`${RENDER_URL}/auth/save-password-history`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ access_token: accessToken, password }),
+        });
+      } catch {}
+
+      setSuccess(true);
+      setTimeout(() => {
+        window.location.hash = "";
+        onDone();
+      }, 2000);
+    } catch(e) {
+      setError(e.message || "Failed to reset password");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if(success) return (
+    <div className="login-wrap">
+      <div className="login-box" style={{textAlign:"center"}}>
+        <div style={{fontSize:48,marginBottom:16}}>✓</div>
+        <div style={{fontSize:18,fontWeight:700,color:T.green,marginBottom:8}}>Password Updated</div>
+        <div style={{color:T.muted,fontSize:13}}>Redirecting to login...</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="login-wrap">
+      <div className="login-box">
+        <div className="login-logo">VCatch</div>
+        <div className="login-sub">Set your new password</div>
+
+        <div className="field">
+          <label>New Password</label>
+          <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Min 8 characters"/>
+          {password && (
+            <div style={{marginTop:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                <span style={{fontSize:11,color:T.muted}}>Password strength</span>
+                <span style={{fontSize:11,fontWeight:600,color:strengthColor}}>{strengthLabel}</span>
+              </div>
+              <div className="progress-bar">
+                <div className="progress-fill" style={{width:`${strength*25}%`,background:strengthColor,transition:"all 0.3s"}}/>
+              </div>
+              <div style={{marginTop:8,display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+                {[["8+ characters",checks.length],["Uppercase letter",checks.upper],["Number",checks.number],["Special character",checks.special]].map(([l,ok])=>(
+                  <div key={l} style={{fontSize:11,color:ok?T.green:T.muted,display:"flex",alignItems:"center",gap:4}}>
+                    <span>{ok?"✓":"○"}</span>{l}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="field">
+          <label>Confirm Password</label>
+          <input type="password" value={confirm} onChange={e=>setConfirm(e.target.value)} placeholder="Repeat new password"/>
+          {confirm && password !== confirm && <div style={{fontSize:12,color:T.red,marginTop:4}}>Passwords do not match</div>}
+          {confirm && password === confirm && <div style={{fontSize:12,color:T.green,marginTop:4}}>Passwords match</div>}
+        </div>
+
+        <button className="btn btn-full" onClick={handleReset} disabled={!isValid||loading} style={{marginTop:8}}>
+          {loading ? "Updating..." : "Set New Password"}
+        </button>
+        {error && <div className="err">{error}</div>}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [session,setSession]=useState(()=>{try{return JSON.parse(localStorage.getItem("sb_session"));}catch{return null;}});
   const [page,setPage]=useState("dashboard");
   const [toast,setToast]=useState(null);
   const [role,setRole]=useState(()=>getRole());
   const [isDark,setIsDark]=useState(()=>localStorage.getItem("theme")!=="light");
+  const [isRecovery,setIsRecovery]=useState(()=>{
+    const hash = window.location.hash;
+    return hash.includes("type=recovery") || hash.includes("access_token") && hash.includes("recovery");
+  });
 
   // Apply theme globally
   useEffect(()=>{
@@ -1364,6 +1523,13 @@ export default function App() {
   }
 
   function toggleTheme(){setIsDark(d=>!d);}
+
+  if(isRecovery) return (
+    <>
+      <style id="vcatch-theme">{getThemeCSS(isDark?DARK:LIGHT)}</style>
+      <PasswordResetPage onDone={()=>setIsRecovery(false)}/>
+    </>
+  );
 
   if(!session) return (
     <>
@@ -1403,7 +1569,7 @@ export default function App() {
             <div className="nav-section">Menu</div>
             {nav.map(n=>(
               <div key={n.id} className={`nav-item ${page===n.id?"active":""}`} onClick={()=>setPage(n.id)}>
-                <span className="nav-icon">{n.icon}</span>{n.label}
+                {n.label}
               </div>
             ))}
           </nav>
