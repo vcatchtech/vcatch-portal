@@ -298,7 +298,9 @@ function LoginPage({ onLogin, theme }) {
     <div className="login-wrap">
       <div className="login-box">
         <div style={{textAlign:"center",marginBottom:28}}>
-          <img src={LOGO_BASE64} alt="VCatch" style={{height:48,marginBottom:8}}/>
+          <div style={{background:"#fff",borderRadius:12,padding:"12px 24px",display:"inline-block",marginBottom:8}}>
+            <img src={LOGO_BASE64} alt="VCatch" style={{height:36,display:"block"}}/>
+          </div>
           <div className="login-sub">HR IVR Portal — Sign in to continue</div>
         </div>
         <div className="field"><label>Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="hr@company.com" onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
@@ -814,7 +816,7 @@ function Leads({ showToast }) {
                 <option value="PENDING">Pending</option>
                 <option value="CALLED">Called (retry pending)</option>
                 <option value="CALLED_FINAL">Completed</option>
-                <option value="SKIPPED">Skipped (DND)</option>
+                <option value="SKIPPED">Skipped (DND or Interested elsewhere)</option>
               </select>
               <button className="btn btn-sm btn-ghost" onClick={()=>loadLeads(filterCampaign)}>↻</button>
             </div>
@@ -869,15 +871,29 @@ function InterestedCandidates({ showToast }) {
         dbSelect("call_logs","?select=phone,campaign,logged_at&sub_disposition=eq.INTERESTED&order=logged_at.desc"),
         dbSelect("candidate_updates","?select=*&order=updated_at.desc"),
       ]);
-      const phones=[...new Set(logs.map(l=>l.phone))];
+
+      // Dedupe by phone — keep most recent occurrence, track all campaigns
+      const byPhone={};
+      logs.forEach(l=>{
+        if(!byPhone[l.phone]){
+          byPhone[l.phone]={phone:l.phone,campaign:l.campaign,logged_at:l.logged_at,allCampaigns:[l.campaign]};
+        }else{
+          if(!byPhone[l.phone].allCampaigns.includes(l.campaign)){
+            byPhone[l.phone].allCampaigns.push(l.campaign);
+          }
+        }
+      });
+      const dedupedLogs=Object.values(byPhone);
+
+      const phones=[...new Set(dedupedLogs.map(l=>l.phone))];
       let leadsMap={};
       if(phones.length){
         const leads=await dbSelect("leads",`?select=phone,name&phone=in.(${phones.slice(0,50).join(",")})`);
         leads.forEach(l=>leadsMap[l.phone]=l.name);
       }
-      const enriched=logs.map(l=>({...l,name:leadsMap[l.phone]||"Unknown"}));
+      const enriched=dedupedLogs.map(l=>({...l,name:leadsMap[l.phone]||"Unknown"}));
       setCandidates(enriched);
-      setCampaigns([...new Set(enriched.map(c=>c.campaign).filter(Boolean))]);
+      setCampaigns([...new Set(logs.map(c=>c.campaign).filter(Boolean))]);
       const updMap={};
       updatesData.forEach(u=>{if(!updMap[u.phone])updMap[u.phone]=[];updMap[u.phone].push(u);});
       setUpdates(updMap);
@@ -895,8 +911,19 @@ function InterestedCandidates({ showToast }) {
     finally{setSaving(false);}
   }
 
+  const [forceDialing,setForceDialing]=useState(null);
+  async function forceDial(phone){
+    if(!window.confirm(`Force dial ${phone}? This bypasses the "already interested" protection.`)) return;
+    setForceDialing(phone);
+    try{
+      await renderFetch("/test-call",{method:"POST",body:JSON.stringify({phone,campaign:"FORCE_REDIAL",bypass_dnd:true})});
+      showToast(`Calling ${phone} now`,"success");
+    }catch(e){showToast(e.message||"Failed to dial","error");}
+    finally{setForceDialing(null);}
+  }
+
   const filtered=candidates.filter(c=>{
-    const cMatch=filterCampaign==="ALL"||c.campaign===filterCampaign;
+    const cMatch=filterCampaign==="ALL"||(c.allCampaigns||[c.campaign]).includes(filterCampaign);
     const s=updates[c.phone]?.[0]?.status||"PENDING";
     const sMatch=filterStatus==="ALL"||s===filterStatus;
     return cMatch&&sMatch;
@@ -943,11 +970,14 @@ function InterestedCandidates({ showToast }) {
                   <tr key={i}>
                     <td style={{fontWeight:500}}>{c.name}</td>
                     <td style={{fontFamily:"monospace"}}>{c.phone}</td>
-                    <td><span className="tag">{c.campaign}</span></td>
+                    <td>{(c.allCampaigns||[c.campaign]).map(camp=><span key={camp} className="tag" style={{marginRight:4,marginBottom:2,display:"inline-block"}}>{camp}</span>)}</td>
                     <td><DisposBadge sub={u?.status||"PENDING"}/></td>
                     <td style={{fontSize:12,color:T.muted,maxWidth:180}}>{u?.comment||"—"}</td>
                     <td style={{fontSize:11,color:T.muted}}>{u?.updated_by?.split("@")[0]||"—"}</td>
-                    <td><button className="btn btn-sm btn-purple" onClick={()=>{setSelected(c);setUpdateForm({status:u?.status||"PENDING",comment:""});}}>Update</button></td>
+                    <td style={{display:"flex",gap:6}}>
+                      <button className="btn btn-sm btn-purple" onClick={()=>{setSelected(c);setUpdateForm({status:u?.status||"PENDING",comment:""});}}>Update</button>
+                      <button className="btn btn-sm btn-ghost" onClick={()=>forceDial(c.phone)} disabled={forceDialing===c.phone} title="Bypass interested protection and call again">{forceDialing===c.phone?"Dialing...":"Force Dial"}</button>
+                    </td>
                   </tr>
                 );})}
                 </tbody>
@@ -1461,7 +1491,9 @@ function PasswordResetPage({ onDone }) {
   return (
     <div className="login-wrap">
       <div className="login-box">
-        <img src={LOGO_BASE64} alt="VCatch" style={{height:48,marginBottom:8,display:"block",margin:"0 auto 12px"}}/>
+        <div style={{background:"#fff",borderRadius:12,padding:"12px 24px",display:"inline-block",margin:"0 auto 12px",textAlign:"center"}}>
+          <img src={LOGO_BASE64} alt="VCatch" style={{height:36,display:"block",margin:"0 auto"}}/>
+        </div>
         <div className="login-sub" style={{textAlign:"center"}}>Set your new password</div>
 
         <div className="field">
@@ -1505,7 +1537,7 @@ function PasswordResetPage({ onDone }) {
 
 export default function App() {
   const [session,setSession]=useState(()=>{try{return JSON.parse(localStorage.getItem("sb_session"));}catch{return null;}});
-  const [page,setPage]=useState("dashboard");
+  const [page,setPage]=useState(()=>localStorage.getItem("sb_page")||"dashboard");
   const [toast,setToast]=useState(null);
   const [role,setRole]=useState(()=>getRole());
   const [isDark,setIsDark]=useState(()=>localStorage.getItem("theme")!=="light");
@@ -1540,6 +1572,7 @@ export default function App() {
     await signOut();
     setSession(null);
     setRole("HR");
+    localStorage.removeItem("sb_page");
   }
 
   function toggleTheme(){setIsDark(d=>!d);}
@@ -1582,13 +1615,15 @@ export default function App() {
         {/* SIDEBAR */}
         <div className="sidebar">
           <div className="sidebar-header">
-            <img src={LOGO_BASE64} alt="VCatch" style={{height:32,marginBottom:4}}/>
+            <div style={{background:"#fff",borderRadius:8,padding:"6px 12px",display:"inline-block",marginBottom:4}}>
+              <img src={LOGO_BASE64} alt="VCatch" style={{height:24,display:"block"}}/>
+            </div>
             <div className="sidebar-tagline">HR IVR Portal</div>
           </div>
           <nav className="nav">
             <div className="nav-section">Menu</div>
             {nav.map(n=>(
-              <div key={n.id} className={`nav-item ${page===n.id?"active":""}`} onClick={()=>setPage(n.id)}>
+              <div key={n.id} className={`nav-item ${page===n.id?"active":""}`} onClick={()=>{setPage(n.id);localStorage.setItem("sb_page",n.id);}}>
                 {n.label}
               </div>
             ))}
