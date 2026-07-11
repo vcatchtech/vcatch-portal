@@ -3,6 +3,22 @@ import { useState, useEffect, useRef, useCallback } from "react";
 const SUPABASE_URL = "https://hndzvwkqveqjzaqegwmp.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhuZHp2d2txdmVxanphcWVnd21wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDc2MTksImV4cCI6MjA5Nzc4MzYxOX0.fajgDAY9JjM9jtG1BYkPqzB04hI8D96bJ0Hv5MZrIQ0";
 const RENDER_URL = "https://vcatch-ivr-server.onrender.com";
+
+// Helper: today's date in YYYY-MM-DD format
+function today() {
+  return new Date().toISOString().split("T")[0];
+}
+
+// Helper: persist and retrieve filters
+function saveFilter(key, value) {
+  try { localStorage.setItem("filter_"+key, JSON.stringify(value)); } catch {}
+}
+function loadFilter(key, defaultVal) {
+  try {
+    const v = localStorage.getItem("filter_"+key);
+    return v !== null ? JSON.parse(v) : defaultVal;
+  } catch { return defaultVal; }
+}
 const LOGO_BASE64 = "data:image/png;base64,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";
 
 // ================================================
@@ -285,16 +301,67 @@ function Modal({ title, sub, onClose, children, actions }) {
 // ================================================
 // LOGIN PAGE
 // ================================================
-function LoginPage({ onLogin, theme }) {
-  const [email,setEmail]=useState(""); const [password,setPassword]=useState("");
-  const [loading,setLoading]=useState(false); const [error,setError]=useState("");
-  async function handleLogin() {
-    setLoading(true); setError("");
-    try { const s = await signIn(email, password); onLogin(s); }
-    catch(e) { setError(e.message||"Invalid email or password"); }
-    finally { setLoading(false); }
+function LoginPage({ onLogin }) {
+  const [email,setEmail]=useState("");
+  const [password,setPassword]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState("");
+  const [showForgot,setShowForgot]=useState(false);
+  const [resetEmail,setResetEmail]=useState("");
+  const [resetSent,setResetSent]=useState(false);
+  const [resetLoading,setResetLoading]=useState(false);
+
+  async function handleLogin(){
+    setLoading(true);setError("");
+    try{const s=await signIn(email,password);onLogin(s);}
+    catch(e){setError(e.message||"Invalid email or password");}
+    finally{setLoading(false);}
   }
-  return (
+
+  async function handleForgot(){
+    if(!resetEmail.trim()){setError("Enter your email");return;}
+    setResetLoading(true);setError("");
+    try{
+      await fetch(`${RENDER_URL}/auth/reset-password`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({email:resetEmail.trim().toLowerCase()})
+      });
+      setResetSent(true);
+    }catch(e){setError("Failed to send reset email. Try again.");}
+    finally{setResetLoading(false);}
+  }
+
+  if(showForgot) return(
+    <div className="login-wrap">
+      <div className="login-box">
+        <div style={{textAlign:"center",marginBottom:24}}>
+          <div style={{background:"#fff",borderRadius:12,padding:"12px 24px",display:"inline-block",marginBottom:8}}>
+            <img src={LOGO_BASE64} alt="VCatch" style={{height:36,display:"block"}}/>
+          </div>
+        </div>
+        {resetSent?(
+          <div style={{textAlign:"center"}}>
+            <div style={{fontSize:32,marginBottom:12}}>✓</div>
+            <div style={{fontWeight:600,fontSize:16,color:T.green,marginBottom:8}}>Reset email sent</div>
+            <div style={{fontSize:13,color:T.muted,marginBottom:20}}>Check your inbox for a password reset link.</div>
+            <button className="btn btn-ghost btn-full" onClick={()=>{setShowForgot(false);setResetSent(false);setResetEmail("");}}>Back to login</button>
+          </div>
+        ):(
+          <>
+            <div style={{fontWeight:600,fontSize:16,marginBottom:4}}>Reset your password</div>
+            <div style={{fontSize:13,color:T.muted,marginBottom:20}}>Enter your email and we'll send you a reset link.</div>
+            <div className="field"><label>Email</label><input type="email" value={resetEmail} onChange={e=>setResetEmail(e.target.value)} placeholder="hr@company.com" onKeyDown={e=>e.key==="Enter"&&handleForgot()}/></div>
+            {error&&<div className="err" style={{marginBottom:8}}>{error}</div>}
+            <button className="btn btn-full" onClick={handleForgot} disabled={resetLoading}>{resetLoading?"Sending...":"Send Reset Link"}</button>
+            <button className="btn btn-ghost btn-full" style={{marginTop:8}} onClick={()=>{setShowForgot(false);setError("");}}>Back to login</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  return(
     <div className="login-wrap">
       <div className="login-box">
         <div style={{textAlign:"center",marginBottom:28}}>
@@ -307,7 +374,9 @@ function LoginPage({ onLogin, theme }) {
         <div className="field"><label>Password</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
         <button className="btn btn-full" onClick={handleLogin} disabled={loading} style={{marginTop:8}}>{loading?"Signing in...":"Sign in"}</button>
         {error&&<div className="err">{error}</div>}
-        <div style={{textAlign:"center",marginTop:16,fontSize:12,color:T.muted}}>Forgot password? Contact your admin.</div>
+        <div style={{textAlign:"center",marginTop:16}}>
+          <button style={{background:"none",border:"none",color:T.accent,fontSize:13,cursor:"pointer"}} onClick={()=>{setShowForgot(true);setError("");}}>Forgot password?</button>
+        </div>
       </div>
     </div>
   );
@@ -322,11 +391,11 @@ function Dashboard({ showToast, role }) {
   const [recentLogs,setRecentLogs]=useState([]);
   const [testPhone,setTestPhone]=useState("");
   const [testLoading,setTestLoading]=useState(false);
-  const [dateFrom,setDateFrom]=useState("");
-  const [dateTo,setDateTo]=useState("");
+  const [dateFrom,setDateFrom]=useState(()=>loadFilter("dash_from",today()));
+  const [dateTo,setDateTo]=useState(()=>loadFilter("dash_to",today()));
 
   useEffect(()=>{loadAll();const i=setInterval(loadDialerStatus,5000);return()=>clearInterval(i);},[]);
-  useEffect(()=>{loadStats();},[dateFrom,dateTo]);
+  useEffect(()=>{saveFilter("dash_from",dateFrom);saveFilter("dash_to",dateTo);loadStats();},[dateFrom,dateTo]);
 
   async function loadAll(){await Promise.all([loadStats(),loadDialerStatus()]);}
 
@@ -336,11 +405,14 @@ function Dashboard({ showToast, role }) {
       if(dateFrom) p+=`&logged_at=gte.${dateFrom}T00:00:00`;
       if(dateTo) p+=`&logged_at=lte.${dateTo}T23:59:59`;
       const [logs,leads]=await Promise.all([dbSelect("call_logs",p),dbSelect("leads","?select=status")]);
+      const byDisp={};
+      logs.forEach(l=>{const d=l.sub_disposition;if(d)byDisp[d]=(byDisp[d]||0)+1;});
       setStats({
         total:logs.length,
-        interested:logs.filter(l=>l.sub_disposition==="INTERESTED").length,
-        notConnected:logs.filter(l=>["BUSY","FAILED"].includes(l.sub_disposition)).length,
+        interested:byDisp.INTERESTED||0,
+        notConnected:(byDisp.BUSY||0)+(byDisp.FAILED||0),
         pending:leads.filter(l=>["PENDING","CALLED"].includes(l.status)).length,
+        byDisp,
       });
       let rp="?select=phone,campaign,sub_disposition,logged_at&order=logged_at.desc&limit=8";
       if(dateFrom) rp+=`&logged_at=gte.${dateFrom}T00:00:00`;
@@ -403,16 +475,33 @@ function Dashboard({ showToast, role }) {
           <div className="kpi-card"><div className="kpi-label">Pending Leads</div><div className="kpi-value amber">{stats?.pending??0}</div><div className="kpi-sub">Awaiting next dial</div></div>
         </div>
 
-        {/* Connection Rate */}
-        <div className="card" style={{marginBottom:20}}>
-          <div className="card-body" style={{paddingBottom:16}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <span style={{fontSize:13,fontWeight:600,color:T.text}}>Connection Rate</span>
-              <span style={{fontSize:18,fontWeight:700,color:T.accent}}>{connRate}%</span>
+        {/* Disposition Breakdown */}
+        {stats&&(
+          <div className="card" style={{marginBottom:20}}>
+            <div className="card-header">
+              <div className="card-title">Disposition Breakdown</div>
+              <span style={{fontSize:12,color:T.muted}}>{stats.total} total calls</span>
             </div>
-            <div className="progress-bar"><div className="progress-fill" style={{width:`${connRate}%`}}/></div>
+            <div className="card-body" style={{padding:"12px 20px"}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+                {[
+                  ["Interested",stats.byDisp?.INTERESTED||0,T.green],
+                  ["Not Interested",stats.byDisp?.NOT_INTERESTED||0,T.red],
+                  ["No Response",stats.byDisp?.NO_RESPONSE||0,T.amber],
+                  ["Invalid Input",stats.byDisp?.INVALID_INPUT||0,T.amber],
+                  ["Busy",stats.byDisp?.BUSY||0,T.muted],
+                  ["Failed",stats.byDisp?.FAILED||0,T.muted],
+                ].map(([label,count,color])=>(
+                  <div key={label} style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>{label}</div>
+                    <div style={{fontSize:20,fontWeight:700,color}}>{count}</div>
+                    <div style={{fontSize:11,color:T.muted}}>{stats.total?Math.round((count/stats.total)*100):0}%</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Recent Calls */}
         <div className="card">
@@ -858,8 +947,10 @@ function InterestedCandidates({ showToast }) {
   const [selected,setSelected]=useState(null);
   const [updateForm,setUpdateForm]=useState({status:"PENDING",comment:""});
   const [saving,setSaving]=useState(false);
-  const [filterCampaign,setFilterCampaign]=useState("ALL");
-  const [filterStatus,setFilterStatus]=useState("ALL");
+  const [filterCampaign,setFilterCampaign]=useState(()=>loadFilter("cand_campaign","ALL"));
+  const [filterStatus,setFilterStatus]=useState(()=>loadFilter("cand_status","PENDING"));
+  const [filterFrom,setFilterFrom]=useState(()=>loadFilter("cand_from",""));
+  const [filterTo,setFilterTo]=useState(()=>loadFilter("cand_to",""));
   const [campaigns,setCampaigns]=useState([]);
 
   useEffect(()=>{load();},[]);
@@ -926,7 +1017,10 @@ function InterestedCandidates({ showToast }) {
     const cMatch=filterCampaign==="ALL"||(c.allCampaigns||[c.campaign]).includes(filterCampaign);
     const s=updates[c.phone]?.[0]?.status||"PENDING";
     const sMatch=filterStatus==="ALL"||s===filterStatus;
-    return cMatch&&sMatch;
+    const date=new Date(c.logged_at);
+    const fMatch=!filterFrom||date>=new Date(filterFrom);
+    const tMatch=!filterTo||date<=new Date(filterTo+"T23:59:59");
+    return cMatch&&sMatch&&fMatch&&tMatch;
   });
 
   const total=candidates.length;
@@ -946,17 +1040,21 @@ function InterestedCandidates({ showToast }) {
           ))}
         </div>
         <div className="filter-row" style={{marginBottom:16}}>
-          <select className="filter-select" value={filterCampaign} onChange={e=>setFilterCampaign(e.target.value)}>
+          <select className="filter-select" value={filterCampaign} onChange={e=>{setFilterCampaign(e.target.value);saveFilter("cand_campaign",e.target.value);}}>
             <option value="ALL">All Campaigns</option>
             {campaigns.map(c=><option key={c} value={c}>{c}</option>)}
           </select>
-          <select className="filter-select" value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
+          <select className="filter-select" value={filterStatus} onChange={e=>{setFilterStatus(e.target.value);saveFilter("cand_status",e.target.value);}}>
             <option value="ALL">All Status</option>
             <option value="PENDING">Pending</option>
             <option value="PICKED_UP">Picked Up</option>
             <option value="REJECTED">Rejected</option>
             <option value="HIRED">Hired</option>
           </select>
+          <input type="date" className="filter-input" value={filterFrom} onChange={e=>{setFilterFrom(e.target.value);saveFilter("cand_from",e.target.value);}} title="From date"/>
+          <span style={{color:T.muted,fontSize:12}}>to</span>
+          <input type="date" className="filter-input" value={filterTo} onChange={e=>{setFilterTo(e.target.value);saveFilter("cand_to",e.target.value);}} title="To date"/>
+          {(filterFrom||filterTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setFilterFrom("");setFilterTo("");saveFilter("cand_from","");saveFilter("cand_to","");}}>Clear</button>}
           <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
         </div>
         <div className="card">
@@ -1174,9 +1272,12 @@ function AudioManager({ showToast }) {
 // ================================================
 function CallLogs({ showToast }) {
   const [logs,setLogs]=useState([]);const [loading,setLoading]=useState(false);
-  const [fd,setFd]=useState("");const [td,setTd]=useState("");
-  const [fc,setFc]=useState("ALL");const [fds,setFds]=useState("ALL");
-  const [limit,setLimit]=useState("ALL");const [campaigns,setCampaigns]=useState([]);
+  const [fd,setFd]=useState(()=>loadFilter("logs_from",today()));
+  const [td,setTd]=useState(()=>loadFilter("logs_to",today()));
+  const [fc,setFc]=useState(()=>loadFilter("logs_campaign","ALL"));
+  const [fds,setFds]=useState(()=>loadFilter("logs_disp","ALL"));
+  const [limit,setLimit]=useState(()=>loadFilter("logs_limit","ALL"));
+  const [campaigns,setCampaigns]=useState([]);
 
   useEffect(()=>{load();},[]);
 
@@ -1288,8 +1389,12 @@ function UserManagement({ showToast }) {
     if(form.password.length<8){showToast("Password must be at least 8 characters","error");return;}
     setAdding(true);
     try{
-      await renderFetch("/auth/create-user",{method:"POST",body:JSON.stringify(form)});
-      showToast(`${form.email} created. Reset email sent.`,"success");
+      const res=await renderFetch("/auth/create-user",{method:"POST",body:JSON.stringify(form)});
+      // Store user_id in user_roles table so delete works properly
+      if(res.user_id){
+        await dbUpdate("user_roles",`email=eq.${encodeURIComponent(form.email)}`,{user_id:res.user_id});
+      }
+      showToast(`${form.email} created. Password setup email sent.`,"success");
       setForm({email:"",name:"",role:"HR",password:""});load();
     }catch(e){showToast(e.message||"Failed to create user","error");}
     finally{setAdding(false);}
@@ -1307,10 +1412,10 @@ function UserManagement({ showToast }) {
   async function updateRole(id,role){try{await dbUpdate("user_roles",`id=eq.${id}`,{role});showToast("Role updated","success");load();}catch{showToast("Failed","error");}}
   async function toggleActive(id,cur){try{await dbUpdate("user_roles",`id=eq.${id}`,{is_active:!cur});load();}catch{showToast("Failed","error");}}
 
-  async function deleteUser(email){
+  async function deleteUser(email, userId){
     if(!window.confirm(`Permanently delete ${email}? This cannot be undone.`)) return;
     try{
-      await renderFetch("/auth/delete-user",{method:"DELETE",body:JSON.stringify({email})});
+      await renderFetch("/auth/delete-user",{method:"DELETE",body:JSON.stringify({email, user_id: userId||""})});
       showToast(`${email} deleted`,"success");
       load();
     }catch(e){showToast(e.message||"Failed to delete user","error");}
@@ -1367,7 +1472,7 @@ function UserManagement({ showToast }) {
                       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                         <button className="btn btn-sm btn-ghost" onClick={()=>resetPassword(u.email)} disabled={resetting===u.email}>{resetting===u.email?"Sending...":"Reset Password"}</button>
                         {u.email!==getEmail()&&<button className="btn btn-sm btn-ghost" onClick={()=>toggleActive(u.id,u.is_active)}>{u.is_active?"Deactivate":"Activate"}</button>}
-                        {u.email!==getEmail()&&<button className="btn btn-sm btn-danger" onClick={()=>deleteUser(u.email)}>Delete</button>}
+                        {u.email!==getEmail()&&<button className="btn btn-sm btn-danger" onClick={()=>deleteUser(u.email, u.user_id)}>Delete</button>}
                       </div>
                     </td>
                   </tr>
