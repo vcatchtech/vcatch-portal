@@ -394,7 +394,14 @@ function Dashboard({ showToast, role }) {
   const [dateFrom,setDateFrom]=useState(()=>loadFilter("dash_from",today()));
   const [dateTo,setDateTo]=useState(()=>loadFilter("dash_to",today()));
 
-  useEffect(()=>{loadAll();const i=setInterval(loadDialerStatus,5000);return()=>clearInterval(i);},[]);
+  useEffect(()=>{
+    loadAll();
+    // Dialer status every 5s
+    const dialerInterval=setInterval(loadDialerStatus,5000);
+    // Full dashboard auto-refresh every 30s
+    const refreshInterval=setInterval(loadStats,30000);
+    return()=>{clearInterval(dialerInterval);clearInterval(refreshInterval);};
+  },[]);
   useEffect(()=>{saveFilter("dash_from",dateFrom);saveFilter("dash_to",dateTo);loadStats();},[dateFrom,dateTo]);
 
   async function loadAll(){await Promise.all([loadStats(),loadDialerStatus()]);}
@@ -678,6 +685,7 @@ function Campaigns({ showToast }) {
 function Leads({ showToast }) {
   const [leads,setLeads]=useState([]);
   const [campaigns,setCampaigns]=useState([]);
+  const [lastCallMap,setLastCallMap]=useState({});
   const [loading,setLoading]=useState(false);
   const [dragOver,setDragOver]=useState(false);
   const [uploading,setUploading]=useState(false);
@@ -701,7 +709,19 @@ function Leads({ showToast }) {
     try{
       let params="?select=*&order=uploaded_at.desc&limit=500";
       if(camp&&camp!=="ALL") params+=`&campaign=eq.${encodeURIComponent(camp)}`;
-      setLeads(await dbSelect("leads",params));
+      const data=await dbSelect("leads",params);
+      setLeads(data);
+
+      // Fetch last call result for each phone number
+      const phones=[...new Set(data.map(l=>l.phone).filter(Boolean))];
+      if(phones.length){
+        const logsParams=`?select=phone,sub_disposition,logged_at&phone=in.(${phones.slice(0,200).join(",")})&order=logged_at.desc`;
+        const logs=await dbSelect("call_logs",logsParams);
+        // Keep only the latest log per phone
+        const map={};
+        logs.forEach(l=>{if(!map[l.phone])map[l.phone]=l;});
+        setLastCallMap(map);
+      }
     }catch(e){showToast("Failed to load leads","error");}
     finally{setLoading(false);}
   }
@@ -915,13 +935,14 @@ function Leads({ showToast }) {
               <div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No leads found</div><div className="empty-sub">Upload a CSV to get started</div></div>
             ):(
               <table>
-                <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th>Status</th><th>Attempts</th><th>Next Eligible</th></tr></thead>
+                <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th>Status</th><th>Last IVR Result</th><th>Attempts</th><th>Next Eligible</th></tr></thead>
                 <tbody>{filtered.map(lead=>(
                   <tr key={lead.id}>
                     <td style={{fontWeight:500}}>{lead.name}</td>
                     <td style={{fontFamily:"monospace"}}>{lead.phone}</td>
                     <td><span className="tag">{lead.campaign}</span></td>
                     <td><DisposBadge sub={lead.status}/></td>
+                    <td>{lastCallMap[lead.phone]?<DisposBadge sub={lastCallMap[lead.phone].sub_disposition}/>:<span style={{color:T.muted,fontSize:12}}>—</span>}</td>
                     <td style={{fontSize:12}}>{lead.attempt_count||0} / {lead.max_retries||1}</td>
                     <td style={{color:T.muted,fontSize:12}}>
                       {lead.eligible_at&&lead.status==="CALLED"?new Date(lead.eligible_at).toLocaleString("en-IN"):"—"}
@@ -1121,8 +1142,22 @@ function InterestedCandidates({ showToast }) {
 // ================================================
 function DndList({ showToast }) {
   const [dnd,setDnd]=useState([]);const [phone,setPhone]=useState("");const [adding,setAdding]=useState(false);
+  const [nameMap,setNameMap]=useState({});
   useEffect(()=>{load();},[]);
-  async function load(){try{setDnd(await dbSelect("dnd_list","?select=*&order=added_at.desc"));}catch{showToast("Failed","error");}}
+  async function load(){
+    try{
+      const data=await dbSelect("dnd_list","?select=*&order=added_at.desc");
+      setDnd(data);
+      // Fetch names from leads table
+      const phones=data.map(d=>d.phone).filter(Boolean);
+      if(phones.length){
+        const leads=await dbSelect("leads",`?select=phone,name&phone=in.(${phones.slice(0,200).join(",")})`);
+        const map={};
+        leads.forEach(l=>{if(!map[l.phone])map[l.phone]=l.name;});
+        setNameMap(map);
+      }
+    }catch{showToast("Failed","error");}
+  }
   async function addDnd(){
     const clean=phone.replace(/\D/g,"");
     if(!clean||clean.length!==10){showToast("Enter a valid 10-digit number","error");return;}
@@ -1150,9 +1185,10 @@ function DndList({ showToast }) {
           <div className="table-wrap">
             {dnd.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No numbers blocked</div></div>:(
               <table>
-                <thead><tr><th>Phone</th><th>Reason</th><th>Added</th><th></th></tr></thead>
+                <thead><tr><th>Name</th><th>Phone</th><th>Reason</th><th>Added</th><th></th></tr></thead>
                 <tbody>{dnd.map(d=>(
                   <tr key={d.id}>
+                    <td style={{fontWeight:500}}>{nameMap[d.phone]||"—"}</td>
                     <td style={{fontFamily:"monospace"}}>{d.phone}</td>
                     <td><DisposBadge sub={d.reason==="NOT_INTERESTED"?"NOT_INTERESTED":"MANUAL"}/></td>
                     <td style={{color:T.muted,fontSize:12}}>{new Date(d.added_at).toLocaleDateString("en-IN")}</td>
