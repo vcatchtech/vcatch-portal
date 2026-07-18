@@ -161,6 +161,8 @@ return `
 // ================================================
 // API UTILITIES
 // ================================================
+const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12h absolute session cap — re-login required after this regardless of activity
+
 async function refreshSession() {
   try {
     const session = JSON.parse(localStorage.getItem("sb_session") || "null");
@@ -172,14 +174,21 @@ async function refreshSession() {
     });
     if (!res.ok) { localStorage.removeItem("sb_session"); return null; }
     const data = await res.json();
-    localStorage.setItem("sb_session", JSON.stringify(data));
-    return data;
+    const merged = { ...data, login_at: session.login_at || Date.now() };
+    localStorage.setItem("sb_session", JSON.stringify(merged));
+    return merged;
   } catch { return null; }
 }
 
 async function getValidSession() {
   const session = JSON.parse(localStorage.getItem("sb_session") || "null");
   if (!session) return null;
+  if (session.login_at && Date.now() - session.login_at > SESSION_MAX_AGE_MS) {
+    localStorage.removeItem("sb_session");
+    localStorage.removeItem("sb_role");
+    window.location.reload();
+    return null;
+  }
   if (!session.expires_at || Date.now() / 1000 >= session.expires_at - 60) {
     return await refreshSession();
   }
@@ -225,7 +234,8 @@ async function signIn(email, password) {
   const data = await supaFetch("/auth/v1/token?grant_type=password", {
     method: "POST", body: JSON.stringify({ email, password }),
   });
-  localStorage.setItem("sb_session", JSON.stringify(data));
+  const dataWithLoginAt = { ...data, login_at: Date.now() };
+  localStorage.setItem("sb_session", JSON.stringify(dataWithLoginAt));
   try {
     const roleData = await supaFetch(`/rest/v1/user_roles?email=eq.${encodeURIComponent(email)}&select=role,name&limit=1`, {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${data.access_token}` }
@@ -234,7 +244,7 @@ async function signIn(email, password) {
   } catch {
     localStorage.setItem("sb_role", JSON.stringify({ role: "HR", name: email }));
   }
-  return data;
+  return dataWithLoginAt;
 }
 
 async function signOut() {
