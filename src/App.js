@@ -207,9 +207,14 @@ async function supaFetch(path, options = {}) {
 }
 
 async function renderFetch(path, options = {}) {
+  const session = await getValidSession();
   const res = await fetch(`${RENDER_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      ...options.headers,
+    },
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error || "Request failed");
