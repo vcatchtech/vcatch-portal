@@ -275,6 +275,36 @@ function downloadCSV(filename, headers, rows) {
   a.download = filename; a.click();
 }
 
+function splitCSVLine(line){
+  // Quote-aware split \u2014 a raw line.split(",") breaks on quoted fields
+  // containing commas (e.g. a name like "Doe, John"), silently misaligning
+  // every column after it.
+  const result=[];let cur="";let inQuotes=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(c==='"'){
+      if(inQuotes && line[i+1]==='"'){cur+='"';i++;}
+      else{inQuotes=!inQuotes;}
+    }else if(c===","&&!inQuotes){
+      result.push(cur);cur="";
+    }else{
+      cur+=c;
+    }
+  }
+  result.push(cur);
+  return result;
+}
+
+function parseCSV(text){
+  const lines=text.trim().split("\n");
+  const headers=splitCSVLine(lines[0]).map(h=>h.trim().toLowerCase());
+  return lines.slice(1).filter(l=>l.trim()).map(line=>{
+    const vals=splitCSVLine(line);const row={};
+    headers.forEach((h,i)=>row[h]=(vals[i]||"").trim());
+    return row;
+  });
+}
+
 // ================================================
 // SHARED COMPONENTS
 // ================================================
@@ -739,36 +769,6 @@ function Leads({ showToast }) {
       }
     }catch(e){showToast("Failed to load leads","error");}
     finally{setLoading(false);}
-  }
-
-  function splitCSVLine(line){
-    // Quote-aware split — a raw line.split(",") breaks on quoted fields
-    // containing commas (e.g. a name like "Doe, John"), silently misaligning
-    // every column after it.
-    const result=[];let cur="";let inQuotes=false;
-    for(let i=0;i<line.length;i++){
-      const c=line[i];
-      if(c==='"'){
-        if(inQuotes && line[i+1]==='"'){cur+='"';i++;}
-        else{inQuotes=!inQuotes;}
-      }else if(c===","&&!inQuotes){
-        result.push(cur);cur="";
-      }else{
-        cur+=c;
-      }
-    }
-    result.push(cur);
-    return result;
-  }
-
-  function parseCSV(text){
-    const lines=text.trim().split("\n");
-    const headers=splitCSVLine(lines[0]).map(h=>h.trim().toLowerCase());
-    return lines.slice(1).filter(l=>l.trim()).map(line=>{
-      const vals=splitCSVLine(line);const row={};
-      headers.forEach((h,i)=>row[h]=(vals[i]||"").trim());
-      return row;
-    });
   }
 
   function validateRows(rows){
@@ -1449,7 +1449,7 @@ function CallLogs({ showToast }) {
 // ================================================
 function UserManagement({ showToast }) {
   const [users,setUsers]=useState([]);const [loading,setLoading]=useState(false);
-  const [form,setForm]=useState({email:"",name:"",role:"HR",password:""});
+  const [form,setForm]=useState({email:"",name:"",role:"HR",password:"",manager_id:""});
   const [adding,setAdding]=useState(false);const [resetting,setResetting]=useState(null);
 
   useEffect(()=>{load();},[]);
@@ -1460,13 +1460,17 @@ function UserManagement({ showToast }) {
     if(form.password.length<8){showToast("Password must be at least 8 characters","error");return;}
     setAdding(true);
     try{
-      const res=await renderFetch("/auth/create-user",{method:"POST",body:JSON.stringify(form)});
-      // Store user_id in user_roles table so delete works properly
-      if(res.user_id){
-        await dbUpdate("user_roles",`email=eq.${encodeURIComponent(form.email)}`,{user_id:res.user_id});
+      const {manager_id,...createBody}=form;
+      const res=await renderFetch("/auth/create-user",{method:"POST",body:JSON.stringify(createBody)});
+      // Store user_id (and reporting line, if set) in user_roles so delete works properly
+      const patch={};
+      if(res.user_id) patch.user_id=res.user_id;
+      if(manager_id) patch.manager_id=manager_id;
+      if(Object.keys(patch).length){
+        await dbUpdate("user_roles",`email=eq.${encodeURIComponent(form.email)}`,patch);
       }
       showToast(`${form.email} created. Password setup email sent.`,"success");
-      setForm({email:"",name:"",role:"HR",password:""});load();
+      setForm({email:"",name:"",role:"HR",password:"",manager_id:""});load();
     }catch(e){showToast(e.message||"Failed to create user","error");}
     finally{setAdding(false);}
   }
@@ -1482,6 +1486,7 @@ function UserManagement({ showToast }) {
 
   async function updateRole(id,role){try{await dbUpdate("user_roles",`id=eq.${id}`,{role});showToast("Role updated","success");load();}catch{showToast("Failed","error");}}
   async function toggleActive(id,cur){try{await dbUpdate("user_roles",`id=eq.${id}`,{is_active:!cur});load();}catch{showToast("Failed","error");}}
+  async function updateManager(id,managerId){try{await dbUpdate("user_roles",`id=eq.${id}`,{manager_id:managerId||null});showToast("Reporting line updated","success");load();}catch{showToast("Failed","error");}}
 
   async function deleteUser(email, userId){
     if(!window.confirm(`Permanently delete ${email}? This cannot be undone.`)) return;
@@ -1515,6 +1520,14 @@ function UserManagement({ showToast }) {
                 </select>
               </div>
             </div>
+            <div className="two-col" style={{marginBottom:12}}>
+              <div className="field"><label>Reports To</label>
+                <select value={form.manager_id} onChange={e=>setForm({...form,manager_id:e.target.value})}>
+                  <option value="">— None —</option>
+                  {users.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+                </select>
+              </div>
+            </div>
             <div className="info-box amber" style={{marginBottom:12}}>A password reset email will be sent automatically so the user can set their own password.</div>
             <button className="btn btn-sm" onClick={createUser} disabled={adding}>{adding?"Creating...":"Create User & Send Email"}</button>
           </div>
@@ -1525,7 +1538,7 @@ function UserManagement({ showToast }) {
           <div className="table-wrap">
             {loading?<div className="empty-state">Loading...</div>:users.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No users</div></div>:(
               <table>
-                <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Change Role</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Change Role</th><th>Reports To</th><th>Actions</th></tr></thead>
                 <tbody>{users.map(u=>(
                   <tr key={u.id}>
                     <td style={{fontWeight:500}}>{u.name||"—"}</td>
@@ -1538,6 +1551,12 @@ function UserManagement({ showToast }) {
                           <option value="HR">HR</option><option value="MANAGER">Manager</option><option value="ADMIN">Admin</option>
                         </select>
                       ):<span style={{fontSize:12,color:T.muted}}>You</span>}
+                    </td>
+                    <td>
+                      <select className="filter-select" value={u.manager_id||""} onChange={e=>updateManager(u.id,e.target.value)} style={{padding:"4px 8px",fontSize:12}}>
+                        <option value="">— None —</option>
+                        {users.filter(m=>m.id!==u.id).map(m=><option key={m.id} value={m.id}>{m.name||m.email}</option>)}
+                      </select>
                     </td>
                     <td>
                       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
@@ -1579,6 +1598,701 @@ function UserManagement({ showToast }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ================================================
+// HIREFLOW — REFERENCE LIST ADMIN
+// Processes / Position Types / Lead Sources share the same simple
+// name + active-toggle shape, same pattern as Caller IDs / Audio Manager.
+// ================================================
+function SimpleRefList({ table, title, placeholder, showToast }) {
+  const [list,setList]=useState([]);const [name,setName]=useState("");const [adding,setAdding]=useState(false);
+  useEffect(()=>{load();},[]);
+  async function load(){try{setList(await dbSelect(table,"?select=*&order=created_at"));}catch{}}
+  async function add(){
+    const clean=name.trim();if(!clean){showToast("Enter a name","error");return;}
+    setAdding(true);
+    try{await dbInsert(table,{name:clean,is_active:true});showToast("Added","success");setName("");load();}
+    catch{showToast("Already exists or failed","error");}
+    finally{setAdding(false);}
+  }
+  async function toggle(id,cur){try{await dbUpdate(table,`id=eq.${id}`,{is_active:!cur});load();}catch{showToast("Failed","error");}}
+  async function remove(id){
+    if(!window.confirm("Remove this entry? Candidates already tagged with it keep the tag — it just won't be selectable for new ones."))return;
+    try{await dbDelete(table,`id=eq.${id}`);showToast("Removed","success");load();}catch{showToast("Failed — may be in use","error");}
+  }
+  return(
+    <div className="card">
+      <div className="card-header"><div className="card-title">{title}</div></div>
+      <div className="card-body">
+        <div className="two-col" style={{marginBottom:12,alignItems:"flex-end"}}>
+          <div className="field" style={{marginBottom:0}}><label>Add New</label><input value={name} onChange={e=>setName(e.target.value)} placeholder={placeholder} onKeyDown={e=>e.key==="Enter"&&add()}/></div>
+          <button className="btn btn-sm" onClick={add} disabled={adding}>{adding?"Adding...":"Add"}</button>
+        </div>
+        {list.length===0?<div className="empty-state"><div className="empty-title">None yet</div></div>:(
+          <table>
+            <thead><tr><th>Name</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>{list.map(r=>(
+              <tr key={r.id}>
+                <td style={{fontWeight:500}}>{r.name}</td>
+                <td><span className={`badge ${r.is_active?"badge-green":"badge-gray"}`}>{r.is_active?"Active":"Inactive"}</span></td>
+                <td style={{display:"flex",gap:6}}>
+                  <button className="btn btn-sm btn-ghost" onClick={()=>toggle(r.id,r.is_active)}>{r.is_active?"Deactivate":"Activate"}</button>
+                  <button className="btn btn-sm btn-danger" onClick={()=>remove(r.id)}>Remove</button>
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ================================================
+// HIREFLOW — FUNNEL STAGES ADMIN
+// Ordered list (sort_order), reorderable, is_exit_stage marks terminal
+// stages (Hired/Rejected/etc.) reachable from anywhere in the funnel.
+// ================================================
+function FunnelStagesAdmin({ showToast }) {
+  const [stages,setStages]=useState([]);const [name,setName]=useState("");const [isExit,setIsExit]=useState(false);const [adding,setAdding]=useState(false);
+  useEffect(()=>{load();},[]);
+  async function load(){try{setStages(await dbSelect("funnel_stages","?select=*&order=sort_order"));}catch{}}
+  async function add(){
+    const clean=name.trim();if(!clean){showToast("Enter a name","error");return;}
+    setAdding(true);
+    try{
+      const nextOrder=stages.length?Math.max(...stages.map(s=>s.sort_order))+1:1;
+      await dbInsert("funnel_stages",{name:clean,sort_order:nextOrder,is_exit_stage:isExit,is_active:true});
+      showToast("Added","success");setName("");setIsExit(false);load();
+    }catch{showToast("Already exists or failed","error");}
+    finally{setAdding(false);}
+  }
+  async function move(idx,dir){
+    const target=idx+dir;
+    if(target<0||target>=stages.length)return;
+    const a=stages[idx],b=stages[target];
+    await dbUpdate("funnel_stages",`id=eq.${a.id}`,{sort_order:b.sort_order});
+    await dbUpdate("funnel_stages",`id=eq.${b.id}`,{sort_order:a.sort_order});
+    load();
+  }
+  async function toggleExit(id,cur){try{await dbUpdate("funnel_stages",`id=eq.${id}`,{is_exit_stage:!cur});load();}catch{showToast("Failed","error");}}
+  async function toggleActive(id,cur){try{await dbUpdate("funnel_stages",`id=eq.${id}`,{is_active:!cur});load();}catch{showToast("Failed","error");}}
+  async function remove(id){
+    if(!window.confirm("Remove this stage? Candidates currently on it keep the reference — it just won't be selectable for new stage changes."))return;
+    try{await dbDelete("funnel_stages",`id=eq.${id}`);showToast("Removed","success");load();}catch{showToast("Failed — may be in use","error");}
+  }
+  return(
+    <div className="card">
+      <div className="card-header"><div className="card-title">Funnel Stages</div></div>
+      <div className="card-body">
+        <div style={{display:"flex",gap:8,marginBottom:16,alignItems:"flex-end",flexWrap:"wrap"}}>
+          <div className="field" style={{marginBottom:0,flex:1,minWidth:160}}><label>New Stage Name</label><input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Background Check" onKeyDown={e=>e.key==="Enter"&&add()}/></div>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:T.muted,marginBottom:10}}>
+            <input type="checkbox" checked={isExit} onChange={e=>setIsExit(e.target.checked)} style={{width:"auto"}}/> Exit stage (won/lost, reachable from anywhere)
+          </label>
+          <button className="btn btn-sm" onClick={add} disabled={adding} style={{marginBottom:10}}>{adding?"Adding...":"Add Stage"}</button>
+        </div>
+        {stages.length===0?<div className="empty-state"><div className="empty-title">No stages yet</div></div>:(
+          <table>
+            <thead><tr><th>Order</th><th>Name</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>{stages.map((s,idx)=>(
+              <tr key={s.id}>
+                <td style={{display:"flex",gap:4}}>
+                  <button className="btn btn-sm btn-ghost" onClick={()=>move(idx,-1)} disabled={idx===0} style={{padding:"2px 8px"}}>↑</button>
+                  <button className="btn btn-sm btn-ghost" onClick={()=>move(idx,1)} disabled={idx===stages.length-1} style={{padding:"2px 8px"}}>↓</button>
+                </td>
+                <td style={{fontWeight:500}}>{s.name}</td>
+                <td>
+                  <span className="badge" style={{cursor:"pointer",background:s.is_exit_stage?`${T.purple}22`:`${T.accent}22`,color:s.is_exit_stage?T.purple:T.accent}} onClick={()=>toggleExit(s.id,s.is_exit_stage)}>
+                    {s.is_exit_stage?"Exit stage":"In-funnel"}
+                  </span>
+                </td>
+                <td><span className={`badge ${s.is_active?"badge-green":"badge-gray"}`} style={{cursor:"pointer"}} onClick={()=>toggleActive(s.id,s.is_active)}>{s.is_active?"Active":"Inactive"}</span></td>
+                <td><button className="btn btn-sm btn-danger" onClick={()=>remove(s.id)}>Remove</button></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DialingSettings({ showToast }) {
+  const [retryMinutes,setRetryMinutes]=useState("");
+  const [maxRetries,setMaxRetries]=useState("");
+  const [saving,setSaving]=useState(false);
+  useEffect(()=>{load();},[]);
+  async function load(){
+    try{
+      const rows=await dbSelect("settings","?select=*&key=in.(hireflow_retry_minutes,hireflow_max_retries)");
+      setRetryMinutes(rows.find(r=>r.key==="hireflow_retry_minutes")?.value||"30");
+      setMaxRetries(rows.find(r=>r.key==="hireflow_max_retries")?.value||"3");
+    }catch{}
+  }
+  async function save(){
+    setSaving(true);
+    try{
+      await dbUpdate("settings","key=eq.hireflow_retry_minutes",{value:String(retryMinutes),updated_at:new Date().toISOString()});
+      await dbUpdate("settings","key=eq.hireflow_max_retries",{value:String(maxRetries),updated_at:new Date().toISOString()});
+      showToast("Saved","success");
+    }catch{showToast("Failed to save","error");}
+    finally{setSaving(false);}
+  }
+  return(
+    <div className="card">
+      <div className="card-header"><div className="card-title">On-the-Spot Dialing</div></div>
+      <div className="card-body">
+        <div className="two-col" style={{marginBottom:12}}>
+          <div className="field"><label>Retry Interval (minutes)</label><input type="number" min="1" value={retryMinutes} onChange={e=>setRetryMinutes(e.target.value)}/></div>
+          <div className="field"><label>Max Auto-Retries</label><input type="number" min="0" value={maxRetries} onChange={e=>setMaxRetries(e.target.value)}/></div>
+        </div>
+        <div className="info-box amber" style={{marginBottom:12}}>When "Send to IVR" doesn't get answered, it's automatically retried this often, up to this many times, before it stops on its own.</div>
+        <button className="btn btn-sm" onClick={save} disabled={saving}>{saving?"Saving...":"Save"}</button>
+      </div>
+    </div>
+  );
+}
+
+function IVRQueue({ showToast }) {
+  const [rows,setRows]=useState([]);
+  const [loading,setLoading]=useState(false);
+  useEffect(()=>{load();},[]);
+  async function load(){
+    setLoading(true);
+    try{setRows(await dbSelect("candidates","?select=id,name,phone,ivr_retry_count,ivr_next_attempt_at&ivr_next_attempt_at=not.is.null&order=ivr_next_attempt_at"));}
+    catch{showToast("Failed to load","error");}
+    finally{setLoading(false);}
+  }
+  async function cancel(id){
+    try{await dbUpdate("candidates",`id=eq.${id}`,{ivr_next_attempt_at:null});showToast("Retry cancelled","success");load();}
+    catch{showToast("Failed","error");}
+  }
+  return(
+    <div className="card">
+      <div className="card-header"><div className="card-title">Pending On-the-Spot Retries ({rows.length})</div><button className="btn btn-sm btn-ghost" onClick={load}>↻</button></div>
+      <div className="table-wrap">
+        {loading?<div className="empty-state">Loading...</div>:rows.length===0?<div className="empty-state"><div className="empty-title">No pending retries</div><div className="empty-sub">Candidates waiting on an automatic IVR retry show up here — not on the Campaigns page.</div></div>:(
+          <table>
+            <thead><tr><th>Name</th><th>Phone</th><th>Attempt</th><th>Next Try</th><th>Actions</th></tr></thead>
+            <tbody>{rows.map(r=>(
+              <tr key={r.id}>
+                <td style={{fontWeight:500}}>{r.name}</td>
+                <td style={{fontFamily:"monospace"}}>{r.phone}</td>
+                <td>{r.ivr_retry_count||0}</td>
+                <td style={{fontSize:12,color:T.muted}}>{new Date(r.ivr_next_attempt_at).toLocaleString("en-IN")}</td>
+                <td><button className="btn btn-sm btn-danger" onClick={()=>cancel(r.id)}>Cancel Retry</button></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HireFlowSettings({ showToast }) {
+  const [tab,setTab]=useState("processes");
+  const tabs=[["processes","Processes"],["positions","Position Types"],["sources","Lead Sources"],["reasons","Rejection Reasons"],["stages","Funnel Stages"],["dialing","Dialing Settings"],["queue","IVR Queue"]];
+  return(
+    <div>
+      <div className="page-header"><div><div className="page-title">HireFlow Settings</div><div className="page-sub">Manage the lookup lists used across the hiring funnel</div></div></div>
+      <div className="page-content">
+        <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+          {tabs.map(([id,label])=>(
+            <button key={id} className={`btn btn-sm ${tab===id?"":"btn-ghost"}`} onClick={()=>setTab(id)}>{label}</button>
+          ))}
+        </div>
+        {tab==="processes"&&<SimpleRefList table="processes" title="Processes" placeholder="e.g. Cred, Smartcoin, ITI Finance" showToast={showToast}/>}
+        {tab==="positions"&&<SimpleRefList table="position_types" title="Position Types" placeholder="e.g. Calling Executive, Field AM" showToast={showToast}/>}
+        {tab==="sources"&&<SimpleRefList table="lead_sources" title="Lead Sources" placeholder="e.g. Work India, LinkedIn" showToast={showToast}/>}
+        {tab==="reasons"&&<SimpleRefList table="rejection_reasons" title="Rejection Reasons" placeholder="e.g. Salary mismatch, Location" showToast={showToast}/>}
+        {tab==="stages"&&<FunnelStagesAdmin showToast={showToast}/>}
+        {tab==="dialing"&&<DialingSettings showToast={showToast}/>}
+        {tab==="queue"&&<IVRQueue showToast={showToast}/>}
+      </div>
+    </div>
+  );
+}
+
+// ================================================
+// HIREFLOW — CANDIDATE DETAIL MODAL
+// ================================================
+function CandidateModal({ candidate, processes, positionTypes, leadSources, rejectionReasons, funnelStages, users, onClose, onChanged, showToast }) {
+  const [form,setForm]=useState({
+    current_salary:candidate.current_salary||"", expected_salary:candidate.expected_salary||"",
+    location:candidate.location||"", process_id:candidate.process_id||"", position_type_id:candidate.position_type_id||"",
+    source_id:candidate.source_id||"", intent:candidate.intent||"",
+    english:candidate.language_ratings?.english||"", hindi:candidate.language_ratings?.hindi||"", malayalam:candidate.language_ratings?.malayalam||"",
+  });
+  const [saving,setSaving]=useState(false);
+  const [showDetails,setShowDetails]=useState(false);
+  const [activity,setActivity]=useState([]);
+  const [newStage,setNewStage]=useState(candidate.current_stage_id||"");
+  const [stageRemark,setStageRemark]=useState("");
+  const [rejectionReasonId,setRejectionReasonId]=useState("");
+  const [attemptRemark,setAttemptRemark]=useState("");
+  const [reassignTo,setReassignTo]=useState(candidate.assigned_to||"");
+  const [sendingToIvr,setSendingToIvr]=useState(false);
+  const [busy,setBusy]=useState(false);
+
+  const stageMap=Object.fromEntries(funnelStages.map(s=>[s.id,s]));
+  const userMap=Object.fromEntries(users.map(u=>[u.id,u]));
+  const myUserId=users.find(u=>u.email===getEmail())?.id;
+  const newStageIsRejected=stageMap[newStage]?.name==="Rejected";
+
+  useEffect(()=>{loadActivity();},[]);
+  async function loadActivity(){
+    try{setActivity(await dbSelect("candidate_activity",`?select=*&candidate_id=eq.${candidate.id}&order=changed_at.desc`));}catch{}
+  }
+
+  async function saveDetails(){
+    setSaving(true);
+    try{
+      await dbUpdate("candidates",`id=eq.${candidate.id}`,{
+        current_salary:form.current_salary||null, expected_salary:form.expected_salary||null,
+        location:form.location||null, process_id:form.process_id||null, position_type_id:form.position_type_id||null,
+        source_id:form.source_id||null, intent:form.intent||null,
+        language_ratings:{english:form.english||null,hindi:form.hindi||null,malayalam:form.malayalam||null},
+        updated_at:new Date().toISOString(),
+      });
+      showToast("Details saved","success");
+      onChanged();
+    }catch{showToast("Failed to save","error");}
+    finally{setSaving(false);}
+  }
+
+  async function changeStage(){
+    if(!newStage||newStage===candidate.current_stage_id){showToast("Pick a different stage first","error");return;}
+    if(newStageIsRejected&&!rejectionReasonId){showToast("Pick a rejection reason","error");return;}
+    setBusy(true);
+    try{
+      const update={current_stage_id:newStage,updated_at:new Date().toISOString()};
+      if(newStageIsRejected)update.rejection_reason_id=rejectionReasonId;
+      await dbUpdate("candidates",`id=eq.${candidate.id}`,update);
+      const reasonLabel=newStageIsRejected?rejectionReasons.find(r=>r.id===rejectionReasonId)?.name:null;
+      await dbInsert("candidate_activity",{
+        candidate_id:candidate.id,type:"STAGE_CHANGE",is_contact_attempt:false,
+        from_stage_id:candidate.current_stage_id,to_stage_id:newStage,
+        remark:reasonLabel?`${reasonLabel}${stageRemark.trim()?" — "+stageRemark.trim():""}`:(stageRemark.trim()||null),
+        changed_by:myUserId,
+      });
+      showToast("Stage updated","success");setStageRemark("");setRejectionReasonId("");
+      onChanged();loadActivity();
+    }catch{showToast("Failed to update stage","error");}
+    finally{setBusy(false);}
+  }
+
+  async function logAttempt(){
+    if(!attemptRemark.trim()){showToast("Add a quick note about the call","error");return;}
+    setBusy(true);
+    try{
+      await dbInsert("candidate_activity",{
+        candidate_id:candidate.id,type:"CALL_ATTEMPT",is_contact_attempt:true,
+        remark:attemptRemark.trim(),changed_by:myUserId,
+      });
+      showToast("Logged","success");setAttemptRemark("");
+      loadActivity();
+    }catch{showToast("Failed to log","error");}
+    finally{setBusy(false);}
+  }
+
+  async function reassign(){
+    if(!reassignTo||reassignTo===candidate.assigned_to){showToast("Pick a different recruiter first","error");return;}
+    setBusy(true);
+    try{
+      await dbUpdate("candidates",`id=eq.${candidate.id}`,{assigned_to:reassignTo,updated_at:new Date().toISOString()});
+      await dbInsert("candidate_activity",{
+        candidate_id:candidate.id,type:"REASSIGNMENT",is_contact_attempt:false,
+        remark:`Reassigned to ${userMap[reassignTo]?.name||userMap[reassignTo]?.email||"—"}`,changed_by:myUserId,
+      });
+      showToast("Reassigned","success");
+      onChanged();loadActivity();
+    }catch{showToast("Failed to reassign","error");}
+    finally{setBusy(false);}
+  }
+
+  async function sendToIvr(){
+    setSendingToIvr(true);
+    try{
+      await renderFetch("/hireflow/send-to-ivr",{method:"POST",body:JSON.stringify({candidate_id:candidate.id})});
+      showToast("Sent to IVR follow-up queue","success");
+      onChanged();loadActivity();
+    }catch(e){showToast(e.message||"Failed to send to IVR","error");}
+    finally{setSendingToIvr(false);}
+  }
+
+  const contactCount=activity.filter(a=>a.is_contact_attempt).length;
+  const currentStage=stageMap[candidate.current_stage_id];
+
+  return(
+    <Modal title={candidate.name} sub={candidate.phone} onClose={onClose} actions={<button className="btn btn-sm btn-ghost" onClick={onClose}>Close</button>}>
+      <div className="card" style={{marginBottom:16,borderColor:currentStage?.is_exit_stage?T.purple:T.accent}}>
+        <div className="card-body">
+          <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",marginBottom:14}}>
+            <span className="badge" style={{fontSize:14,padding:"6px 14px",background:currentStage?.is_exit_stage?`${T.purple}22`:`${T.accent}22`,color:currentStage?.is_exit_stage?T.purple:T.accent}}>{currentStage?.name||"No stage"}</span>
+            <span className="badge badge-gray">Contacted {contactCount}x</span>
+            {candidate.linked_lead_campaign&&<span className="badge badge-green">IVR called before</span>}
+          </div>
+          <div className="two-col" style={{marginBottom:8}}>
+            <div className="field" style={{marginBottom:0}}><label>Move To</label>
+              <select value={newStage} onChange={e=>setNewStage(e.target.value)}>
+                {funnelStages.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            {newStageIsRejected?(
+              <div className="field" style={{marginBottom:0}}><label>Rejection Reason *</label>
+                <select value={rejectionReasonId} onChange={e=>setRejectionReasonId(e.target.value)}>
+                  <option value="">—</option>{rejectionReasons.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              </div>
+            ):(
+              <div className="field" style={{marginBottom:0}}><label>Remark / Sub-disposition</label><input value={stageRemark} onChange={e=>setStageRemark(e.target.value)} placeholder="Why the stage is changing"/></div>
+            )}
+          </div>
+          {newStageIsRejected&&(
+            <div className="field" style={{marginBottom:8}}><label>Additional Note (optional)</label><input value={stageRemark} onChange={e=>setStageRemark(e.target.value)} placeholder="Any extra detail"/></div>
+          )}
+          <button className="btn btn-sm" onClick={changeStage} disabled={busy}>Update Stage</button>
+        </div>
+      </div>
+
+      <div className="card" style={{marginBottom:16}}>
+        <div className="card-header"><div className="card-title">Log a Contact Attempt</div></div>
+        <div className="card-body">
+          <div className="field"><label>What happened</label><input value={attemptRemark} onChange={e=>setAttemptRemark(e.target.value)} placeholder="e.g. No answer, tried again"/></div>
+          <button className="btn btn-sm" onClick={logAttempt} disabled={busy}>Log Attempt</button>
+        </div>
+      </div>
+
+      <div className="card" style={{marginBottom:16}}>
+        <div className="card-header"><div className="card-title">Assignment</div></div>
+        <div className="card-body">
+          <div className="two-col" style={{marginBottom:8}}>
+            <div className="field" style={{marginBottom:0}}><label>Assigned To</label>
+              <select value={reassignTo} onChange={e=>setReassignTo(e.target.value)}>
+                <option value="">— Unassigned —</option>{users.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+              </select>
+            </div>
+            <button className="btn btn-sm" onClick={reassign} disabled={busy} style={{alignSelf:"flex-end"}}>Reassign</button>
+          </div>
+          <button className="btn btn-sm btn-amber" onClick={sendToIvr} disabled={sendingToIvr}>{sendingToIvr?"Calling...":"Send to IVR (didn't pick up)"}</button>
+        </div>
+      </div>
+
+      <div className="card" style={{marginBottom:16}}>
+        <div className="card-header" style={{cursor:"pointer"}} onClick={()=>setShowDetails(d=>!d)}>
+          <div className="card-title">Candidate Details {showDetails?"▾":"▸"}</div>
+        </div>
+        {showDetails&&(
+          <div className="card-body">
+            <div className="two-col" style={{marginBottom:8}}>
+              <div className="field"><label>Current Salary</label><input value={form.current_salary} onChange={e=>setForm({...form,current_salary:e.target.value})} placeholder="e.g. 18k"/></div>
+              <div className="field"><label>Expected Salary</label><input value={form.expected_salary} onChange={e=>setForm({...form,expected_salary:e.target.value})} placeholder="e.g. 22k"/></div>
+            </div>
+            <div className="two-col" style={{marginBottom:8}}>
+              <div className="field"><label>Location</label><input value={form.location} onChange={e=>setForm({...form,location:e.target.value})} placeholder="City / area"/></div>
+              <div className="field"><label>Intent</label>
+                <select value={form.intent} onChange={e=>setForm({...form,intent:e.target.value})}>
+                  <option value="">—</option><option value="YES">Yes</option><option value="MAYBE">Maybe</option><option value="NO">No</option>
+                </select>
+              </div>
+            </div>
+            <div className="two-col" style={{marginBottom:8}}>
+              <div className="field"><label>Process</label>
+                <select value={form.process_id} onChange={e=>setForm({...form,process_id:e.target.value})}>
+                  <option value="">—</option>{processes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div className="field"><label>Position</label>
+                <select value={form.position_type_id} onChange={e=>setForm({...form,position_type_id:e.target.value})}>
+                  <option value="">—</option>{positionTypes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="field" style={{marginBottom:8}}><label>Source</label>
+              <select value={form.source_id} onChange={e=>setForm({...form,source_id:e.target.value})}>
+                <option value="">—</option>{leadSources.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:8}}>
+              {["english","hindi","malayalam"].map(lang=>(
+                <div className="field" key={lang}><label style={{textTransform:"capitalize"}}>{lang}</label>
+                  <select value={form[lang]} onChange={e=>setForm({...form,[lang]:e.target.value})}>
+                    <option value="">—</option>{[1,2,3,4,5].map(n=><option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <button className="btn btn-sm" onClick={saveDetails} disabled={saving}>{saving?"Saving...":"Save Details"}</button>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-header"><div className="card-title">Activity Timeline</div></div>
+        <div className="card-body" style={{maxHeight:260,overflowY:"auto"}}>
+          {activity.length===0?<div style={{fontSize:13,color:T.muted}}>No activity yet</div>:activity.map(a=>(
+            <div key={a.id} style={{padding:"8px 0",borderBottom:`1px solid ${T.border}`,fontSize:13}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}>
+                <span style={{fontWeight:600}}>{a.type.replace("_"," ")}</span>
+                <span style={{color:T.muted,fontSize:11}}>{new Date(a.changed_at).toLocaleString("en-IN")}</span>
+              </div>
+              {a.remark&&<div style={{color:T.muted}}>{a.remark}</div>}
+              {a.changed_by&&<div style={{color:T.muted,fontSize:11}}>by {userMap[a.changed_by]?.name||userMap[a.changed_by]?.email||"—"}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ================================================
+// HIREFLOW — CANDIDATES
+// ================================================
+function HireFlowCandidates({ showToast }) {
+  const [candidates,setCandidates]=useState([]);
+  const [processes,setProcesses]=useState([]);
+  const [positionTypes,setPositionTypes]=useState([]);
+  const [leadSources,setLeadSources]=useState([]);
+  const [rejectionReasons,setRejectionReasons]=useState([]);
+  const [funnelStages,setFunnelStages]=useState([]);
+  const [users,setUsers]=useState([]);
+  const [activitySummary,setActivitySummary]=useState({});
+  const [loading,setLoading]=useState(false);
+  const [search,setSearch]=useState("");
+  const [stageFilter,setStageFilter]=useState("ALL");
+  const [processFilter,setProcessFilter]=useState("ALL");
+  const [scopeFilter,setScopeFilter]=useState("ALL");
+  const [selected,setSelected]=useState(null);
+  const [showAdd,setShowAdd]=useState(false);
+  const [addForm,setAddForm]=useState({name:"",phone:"",process_id:"",position_type_id:"",source_id:"",assigned_to:""});
+  const [adding,setAdding]=useState(false);
+  const [uploading,setUploading]=useState(false);
+  const fileRef=useRef();
+
+  const role=getRole();
+  const myUserId=users.find(u=>u.email===getEmail())?.id;
+  const reporteeIds=users.filter(u=>u.manager_id===myUserId).map(u=>u.id);
+
+  useEffect(()=>{loadAll();},[]);
+
+  async function loadAll(){
+    setLoading(true);
+    try{
+      const [cands,procs,posTypes,sources,reasons,stages,userList,activity]=await Promise.all([
+        dbSelect("candidates","?select=*&order=updated_at.desc"),
+        dbSelect("processes","?select=*&order=name"),
+        dbSelect("position_types","?select=*&order=name"),
+        dbSelect("lead_sources","?select=*&order=name"),
+        dbSelect("rejection_reasons","?select=*&order=name"),
+        dbSelect("funnel_stages","?select=*&order=sort_order"),
+        dbSelect("user_roles","?select=id,name,email,role,manager_id"),
+        dbSelect("candidate_activity","?select=candidate_id,is_contact_attempt,changed_at&order=changed_at.desc"),
+      ]);
+      setCandidates(cands);setProcesses(procs);setPositionTypes(posTypes);setLeadSources(sources);setRejectionReasons(reasons);setFunnelStages(stages);setUsers(userList);
+
+      const summary={};
+      activity.forEach(a=>{
+        if(!summary[a.candidate_id])summary[a.candidate_id]={count:0,last:a.changed_at};
+        if(a.is_contact_attempt)summary[a.candidate_id].count+=1;
+        if(a.changed_at>summary[a.candidate_id].last)summary[a.candidate_id].last=a.changed_at;
+      });
+      setActivitySummary(summary);
+    }catch(e){showToast("Failed to load candidates","error");}
+    finally{setLoading(false);}
+  }
+
+  const processMap=Object.fromEntries(processes.map(p=>[p.id,p.name]));
+  const positionMap=Object.fromEntries(positionTypes.map(p=>[p.id,p.name]));
+  const stageMap=Object.fromEntries(funnelStages.map(s=>[s.id,s]));
+  const userMap=Object.fromEntries(users.map(u=>[u.id,u]));
+
+  function isStale(c){
+    const last=activitySummary[c.id]?.last||c.updated_at||c.created_at;
+    if(!last)return false;
+    return (Date.now()-new Date(last).getTime())>24*60*60*1000;
+  }
+
+  const filtered=candidates.filter(c=>{
+    if(search){
+      const q=search.toLowerCase();
+      if(!c.name?.toLowerCase().includes(q)&&!c.phone?.includes(q))return false;
+    }
+    if(stageFilter!=="ALL"&&c.current_stage_id!==stageFilter)return false;
+    if(processFilter!=="ALL"&&c.process_id!==processFilter)return false;
+    if(scopeFilter==="MINE"&&c.assigned_to!==myUserId)return false;
+    if(scopeFilter==="TEAM"&&!reporteeIds.includes(c.assigned_to)&&c.assigned_to!==myUserId)return false;
+    return true;
+  });
+
+  async function addCandidate(){
+    const phone=addForm.phone.replace(/\D/g,"");
+    if(!addForm.name.trim()||!phone){showToast("Name and phone required","error");return;}
+    if(phone.length!==10){showToast("Phone must be 10 digits","error");return;}
+    setAdding(true);
+    try{
+      const dupe=await dbSelect("candidates",`?select=id,name,assigned_to,current_stage_id&phone=eq.${phone}`);
+      if(dupe.length){
+        const owner=userMap[dupe[0].assigned_to];
+        const stage=stageMap[dupe[0].current_stage_id];
+        showToast(`Already exists: ${dupe[0].name} (${stage?.name||"no stage"}${owner?`, assigned to ${owner.name||owner.email}`:""})`,"error");
+        setAdding(false);return;
+      }
+      const newStage=funnelStages.find(s=>s.name==="New");
+      await dbInsert("candidates",{
+        name:addForm.name.trim(),phone,
+        process_id:addForm.process_id||null,position_type_id:addForm.position_type_id||null,
+        source_id:addForm.source_id||null,assigned_to:addForm.assigned_to||null,
+        current_stage_id:newStage?.id||null,uploaded_by:myUserId,
+      });
+      showToast("Candidate added","success");
+      setShowAdd(false);setAddForm({name:"",phone:"",process_id:"",position_type_id:"",source_id:"",assigned_to:""});
+      loadAll();
+    }catch{showToast("Failed to add candidate","error");}
+    finally{setAdding(false);}
+  }
+
+  async function handleUpload(file){
+    if(!file||!file.name.endsWith(".csv")){showToast("Please upload a CSV file","error");return;}
+    setUploading(true);
+    try{
+      const text=await file.text();
+      const rows=parseCSV(text);
+      const existingPhones=new Set(candidates.map(c=>c.phone));
+      const newStage=funnelStages.find(s=>s.name==="New");
+      let added=0,skippedDup=0,skippedInvalid=0;
+      const payload=[];
+      rows.forEach(row=>{
+        const phone=(row.phone||row.number||"").replace(/\D/g,"");
+        const name=row.name||row.candidate||"";
+        if(!phone||phone.length!==10||!name){skippedInvalid++;return;}
+        if(existingPhones.has(phone)){skippedDup++;return;}
+        existingPhones.add(phone);
+        payload.push({
+          name,phone,
+          current_salary:row["current salary"]||null,expected_salary:row["expected salary"]||null,
+          location:row.location||null,current_stage_id:newStage?.id||null,uploaded_by:myUserId,
+        });
+        added++;
+      });
+      if(payload.length)await dbInsert("candidates",payload);
+      showToast(`${added} added, ${skippedDup} duplicates skipped, ${skippedInvalid} invalid rows skipped`,added?"success":"error");
+      loadAll();
+    }catch{showToast("Upload failed","error");}
+    finally{setUploading(false);if(fileRef.current)fileRef.current.value="";}
+  }
+
+  return(
+    <div>
+      <div className="page-header">
+        <div><div className="page-title">HireFlow</div><div className="page-sub">Hiring funnel — from first contact to hired</div></div>
+        <div style={{display:"flex",gap:8}}>
+          <input ref={fileRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>handleUpload(e.target.files[0])}/>
+          <button className="btn btn-sm btn-ghost" onClick={()=>downloadCSV("hireflow_upload_template.csv",["name","phone","current salary","expected salary","location"],[["Jane Doe","9876543210","18000","22000","Bangalore"]])}>Download Template</button>
+          <button className="btn btn-sm btn-ghost" onClick={()=>fileRef.current?.click()} disabled={uploading}>{uploading?"Uploading...":"Upload CSV"}</button>
+          <button className="btn btn-sm" onClick={()=>setShowAdd(true)}>Add Candidate</button>
+        </div>
+      </div>
+      <div className="page-content">
+        <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or phone" style={{maxWidth:220}}/>
+          <select className="filter-select" value={stageFilter} onChange={e=>setStageFilter(e.target.value)}>
+            <option value="ALL">All Stages</option>
+            {funnelStages.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <select className="filter-select" value={processFilter} onChange={e=>setProcessFilter(e.target.value)}>
+            <option value="ALL">All Processes</option>
+            {processes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          {["ADMIN","MANAGER"].includes(role)&&(
+            <select className="filter-select" value={scopeFilter} onChange={e=>setScopeFilter(e.target.value)}>
+              <option value="ALL">Everyone</option>
+              <option value="MINE">Assigned to Me</option>
+              {role==="MANAGER"&&<option value="TEAM">My Team</option>}
+            </select>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="card-header"><div className="card-title">Candidates ({filtered.length})</div><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div>
+          <div className="table-wrap">
+            {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No candidates found</div></div>:(
+              <table>
+                <thead><tr><th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Stage</th><th>Assigned To</th><th>Contacted</th><th>Last Activity</th></tr></thead>
+                <tbody>{filtered.map(c=>{
+                  const stage=stageMap[c.current_stage_id];
+                  const owner=userMap[c.assigned_to];
+                  const summary=activitySummary[c.id];
+                  const stale=isStale(c);
+                  return(
+                    <tr key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer",background:stale?T.amberDim:"transparent"}}>
+                      <td style={{fontWeight:500}}>{c.name}</td>
+                      <td style={{fontFamily:"monospace"}}>{c.phone}</td>
+                      <td>{processMap[c.process_id]||"—"}</td>
+                      <td>{positionMap[c.position_type_id]||"—"}</td>
+                      <td><span className="badge" style={{background:stage?.is_exit_stage?`${T.purple}22`:`${T.accent}22`,color:stage?.is_exit_stage?T.purple:T.accent}}>{stage?.name||"—"}</span></td>
+                      <td>{owner?.name||owner?.email||"Unassigned"}</td>
+                      <td>{summary?.count||0}x</td>
+                      <td style={{fontSize:12,color:stale?T.amber:T.muted}}>
+                        {summary?.last?new Date(summary.last).toLocaleDateString("en-IN"):"Never"}{stale&&" — STALE"}
+                      </td>
+                    </tr>
+                  );
+                })}</tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {selected&&(
+        <CandidateModal
+          candidate={selected} processes={processes} positionTypes={positionTypes}
+          leadSources={leadSources} rejectionReasons={rejectionReasons} funnelStages={funnelStages} users={users}
+          onClose={()=>setSelected(null)} onChanged={loadAll} showToast={showToast}
+        />
+      )}
+
+      {showAdd&&(
+        <Modal title="Add Candidate" onClose={()=>setShowAdd(false)} actions={<>
+          <button className="btn btn-sm btn-ghost" onClick={()=>setShowAdd(false)}>Cancel</button>
+          <button className="btn btn-sm" onClick={addCandidate} disabled={adding}>{adding?"Adding...":"Add"}</button>
+        </>}>
+          <div className="two-col" style={{marginBottom:12}}>
+            <div className="field"><label>Name *</label><input value={addForm.name} onChange={e=>setAddForm({...addForm,name:e.target.value})}/></div>
+            <div className="field"><label>Phone *</label><input value={addForm.phone} onChange={e=>setAddForm({...addForm,phone:e.target.value})} placeholder="10 digits"/></div>
+          </div>
+          <div className="two-col" style={{marginBottom:12}}>
+            <div className="field"><label>Process</label>
+              <select value={addForm.process_id} onChange={e=>setAddForm({...addForm,process_id:e.target.value})}>
+                <option value="">—</option>{processes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div className="field"><label>Position</label>
+              <select value={addForm.position_type_id} onChange={e=>setAddForm({...addForm,position_type_id:e.target.value})}>
+                <option value="">—</option>{positionTypes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="two-col">
+            <div className="field"><label>Source</label>
+              <select value={addForm.source_id} onChange={e=>setAddForm({...addForm,source_id:e.target.value})}>
+                <option value="">—</option>{leadSources.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div className="field"><label>Assign To</label>
+              <select value={addForm.assigned_to} onChange={e=>setAddForm({...addForm,assigned_to:e.target.value})}>
+                <option value="">— Unassigned —</option>{users.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+              </select>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -1769,13 +2483,15 @@ export default function App() {
 
   const allNav=[
     {id:"dashboard",label:"Dashboard",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"campaigns",label:"Campaigns",icon:"",roles:["ADMIN","MANAGER"]},
+    {id:"hireflow",label:"HireFlow",icon:"",roles:["ADMIN","MANAGER","HR"]},
+    {id:"hireflow-settings",label:"HireFlow Settings",icon:"",roles:["ADMIN","MANAGER"]},
+    {id:"campaigns",label:"IVR Campaigns",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"leads",label:"Leads",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"interested",label:"Candidates",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"dnd",label:"DND List",icon:"",roles:["ADMIN","MANAGER"]},
-    {id:"callerids",label:"Caller IDs",icon:"",roles:["ADMIN","MANAGER"]},
-    {id:"audio",label:"Audio Manager",icon:"",roles:["ADMIN","MANAGER"]},
-    {id:"logs",label:"Call Logs",icon:"",roles:["ADMIN","MANAGER","HR"]},
+    {id:"interested",label:"IVR Candidates",icon:"",roles:["ADMIN","MANAGER","HR"]},
+    {id:"dnd",label:"IVR DND List",icon:"",roles:["ADMIN","MANAGER"]},
+    {id:"callerids",label:"IVR Caller IDs",icon:"",roles:["ADMIN","MANAGER"]},
+    {id:"audio",label:"IVR Audio Manager",icon:"",roles:["ADMIN","MANAGER"]},
+    {id:"logs",label:"IVR Call Logs",icon:"",roles:["ADMIN","MANAGER","HR"]},
     {id:"users",label:"Users",icon:"",roles:["ADMIN"]},
   ];
 
@@ -1827,6 +2543,8 @@ export default function App() {
           {page==="campaigns"&&["ADMIN","MANAGER"].includes(role)&&<Campaigns showToast={showToast}/>}
           {page==="leads"&&<Leads showToast={showToast}/>}
           {page==="interested"&&<InterestedCandidates showToast={showToast}/>}
+          {page==="hireflow"&&<HireFlowCandidates showToast={showToast}/>}
+          {page==="hireflow-settings"&&["ADMIN","MANAGER"].includes(role)&&<HireFlowSettings showToast={showToast}/>}
           {page==="dnd"&&["ADMIN","MANAGER"].includes(role)&&<DndList showToast={showToast}/>}
           {page==="callerids"&&["ADMIN","MANAGER"].includes(role)&&<CallerIds showToast={showToast}/>}
           {page==="audio"&&["ADMIN","MANAGER"].includes(role)&&<AudioManager showToast={showToast}/>}
