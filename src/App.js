@@ -741,12 +741,32 @@ function Leads({ showToast }) {
     finally{setLoading(false);}
   }
 
+  function splitCSVLine(line){
+    // Quote-aware split — a raw line.split(",") breaks on quoted fields
+    // containing commas (e.g. a name like "Doe, John"), silently misaligning
+    // every column after it.
+    const result=[];let cur="";let inQuotes=false;
+    for(let i=0;i<line.length;i++){
+      const c=line[i];
+      if(c==='"'){
+        if(inQuotes && line[i+1]==='"'){cur+='"';i++;}
+        else{inQuotes=!inQuotes;}
+      }else if(c===","&&!inQuotes){
+        result.push(cur);cur="";
+      }else{
+        cur+=c;
+      }
+    }
+    result.push(cur);
+    return result;
+  }
+
   function parseCSV(text){
     const lines=text.trim().split("\n");
-    const headers=lines[0].split(",").map(h=>h.trim().toLowerCase().replace(/"/g,""));
+    const headers=splitCSVLine(lines[0]).map(h=>h.trim().toLowerCase());
     return lines.slice(1).filter(l=>l.trim()).map(line=>{
-      const vals=line.split(",");const row={};
-      headers.forEach((h,i)=>row[h]=(vals[i]||"").trim().replace(/"/g,""));
+      const vals=splitCSVLine(line);const row={};
+      headers.forEach((h,i)=>row[h]=(vals[i]||"").trim());
       return row;
     });
   }
