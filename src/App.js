@@ -448,16 +448,19 @@ function Dashboard({ showToast, role }) {
   const [testLoading,setTestLoading]=useState(false);
   const [dateFrom,setDateFrom]=useState(()=>loadFilter("dash_from",today()));
   const [dateTo,setDateTo]=useState(()=>loadFilter("dash_to",today()));
+  const [campaignFilter,setCampaignFilter]=useState("");
+  const [campaignList,setCampaignList]=useState([]);
 
   useEffect(()=>{
     loadAll();
+    dbSelect("campaigns","?select=name&order=created_at.desc").then(setCampaignList).catch(()=>{});
     // Dialer status every 5s
     const dialerInterval=setInterval(loadDialerStatus,5000);
     // Full dashboard auto-refresh every 30s
     const refreshInterval=setInterval(loadStats,30000);
     return()=>{clearInterval(dialerInterval);clearInterval(refreshInterval);};
   },[]);
-  useEffect(()=>{saveFilter("dash_from",dateFrom);saveFilter("dash_to",dateTo);loadStats();},[dateFrom,dateTo]);
+  useEffect(()=>{saveFilter("dash_from",dateFrom);saveFilter("dash_to",dateTo);loadStats();},[dateFrom,dateTo,campaignFilter]);
 
   async function loadAll(){await Promise.all([loadStats(),loadDialerStatus()]);}
 
@@ -466,7 +469,10 @@ function Dashboard({ showToast, role }) {
       let p="?select=sub_disposition,logged_at&limit=5000";
       if(dateFrom) p+=`&logged_at=gte.${dateFrom}T00:00:00`;
       if(dateTo) p+=`&logged_at=lte.${dateTo}T23:59:59`;
-      const [logs,leads]=await Promise.all([dbSelect("call_logs",p),dbSelect("leads","?select=status")]);
+      if(campaignFilter) p+=`&campaign=eq.${encodeURIComponent(campaignFilter)}`;
+      let lp="?select=status";
+      if(campaignFilter) lp+=`&campaign=eq.${encodeURIComponent(campaignFilter)}`;
+      const [logs,leads]=await Promise.all([dbSelect("call_logs",p),dbSelect("leads",lp)]);
       const byDisp={};
       logs.forEach(l=>{const d=l.sub_disposition;if(d)byDisp[d]=(byDisp[d]||0)+1;});
       setStats({
@@ -479,6 +485,7 @@ function Dashboard({ showToast, role }) {
       let rp="?select=phone,campaign,sub_disposition,logged_at&order=logged_at.desc&limit=8";
       if(dateFrom) rp+=`&logged_at=gte.${dateFrom}T00:00:00`;
       if(dateTo) rp+=`&logged_at=lte.${dateTo}T23:59:59`;
+      if(campaignFilter) rp+=`&campaign=eq.${encodeURIComponent(campaignFilter)}`;
       setRecentLogs(await dbSelect("call_logs",rp));
     }catch(e){}
   }
@@ -505,7 +512,11 @@ function Dashboard({ showToast, role }) {
           <input type="date" className="filter-input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
           <span style={{color:T.muted,fontSize:12}}>to</span>
           <input type="date" className="filter-input" value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
-          {(dateFrom||dateTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setDateFrom("");setDateTo("");}}>✕ Clear</button>}
+          <select className="filter-select" value={campaignFilter} onChange={e=>setCampaignFilter(e.target.value)}>
+            <option value="">All Campaigns</option>
+            {campaignList.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+          </select>
+          {(dateFrom||dateTo||campaignFilter)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setDateFrom("");setDateTo("");setCampaignFilter("");}}>✕ Clear</button>}
           <button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button>
         </div>
       </div>
@@ -2177,13 +2188,21 @@ function HireFlowCandidates({ showToast }) {
   const dashStageBreakdown=funnelStages.map(s=>({
     stage:s,count:dashAssignedInRange.filter(c=>c.current_stage_id===s.id).length,
   }));
-  const dashPendingInterviews=dashScoped.filter(c=>{
-    if(!c.interview_scheduled_at)return false;
-    const d=new Date(c.interview_scheduled_at).toISOString().split("T")[0];
-    if(d<dashFrom||d>dashTo)return false;
-    return stageMap[c.current_stage_id]?.name==="Interview Scheduled";
-  });
-  const dashStale=dashScoped.filter(isStale);
+  const dashScheduledInterviews=dashScoped.filter(c=>c.interview_scheduled_at&&stageMap[c.current_stage_id]?.name==="Interview Scheduled");
+  const dashInterviewsUpcoming=dashScheduledInterviews.filter(c=>new Date(c.interview_scheduled_at).toISOString().split("T")[0]>today());
+  const dashInterviewsToday=dashScheduledInterviews.filter(c=>new Date(c.interview_scheduled_at).toISOString().split("T")[0]===today());
+  const dashInterviewsPast=dashScheduledInterviews.filter(c=>new Date(c.interview_scheduled_at).toISOString().split("T")[0]<today());
+
+  function daysUntouched(c){
+    const last=activitySummary[c.id]?.last||c.updated_at||c.created_at;
+    if(!last)return 0;
+    const lastDate=new Date(last).toISOString().split("T")[0];
+    const msPerDay=24*60*60*1000;
+    return Math.floor((new Date(today()).getTime()-new Date(lastDate).getTime())/msPerDay);
+  }
+  const dashUntouchedToday=dashScoped.filter(c=>daysUntouched(c)===1);
+  const dashUntouchedPast=dashScoped.filter(c=>daysUntouched(c)>=2);
+
   const dashRecruiterOptions=role==="ADMIN"?users:role==="MANAGER"?users.filter(u=>reporteeIds.includes(u.id)||u.id===myUserId):[];
 
   async function addCandidate(){
@@ -2344,21 +2363,40 @@ function HireFlowCandidates({ showToast }) {
               <button className="btn btn-sm btn-ghost" onClick={()=>{setDashFrom(today());setDashTo(today());}}>Reset to Today</button>
             </div>
 
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:16}}>
+            {(dashInterviewsPast.length>0||dashUntouchedPast.length>0)&&(
+              <div className="card" style={{padding:12,marginBottom:16,background:`${T.red}18`,border:`1px solid ${T.red}55`,display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:16}}>⚠</span>
+                <div style={{fontSize:13,fontWeight:500,color:T.red}}>
+                  Critical: {dashInterviewsPast.length>0&&`${dashInterviewsPast.length} interview${dashInterviewsPast.length>1?"s":""} overdue`}
+                  {dashInterviewsPast.length>0&&dashUntouchedPast.length>0&&", "}
+                  {dashUntouchedPast.length>0&&`${dashUntouchedPast.length} candidate${dashUntouchedPast.length>1?"s":""} untouched for 2+ days`}
+                </div>
+              </div>
+            )}
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:12}}>
               <div className="card" style={{padding:16}}>
                 <div style={{fontSize:12,color:T.muted}}>Total Assigned</div>
                 <div style={{fontSize:28,fontWeight:600}}>{dashAssignedInRange.length}</div>
                 <div style={{fontSize:12,color:T.muted}}>{dashFrom===dashTo?dashFrom:`${dashFrom} → ${dashTo}`}</div>
               </div>
-              <div className="card" style={{padding:16,background:dashPendingInterviews.length?T.amberDim:undefined}}>
-                <div style={{fontSize:12,color:T.muted}}>Pending Interviews</div>
-                <div style={{fontSize:28,fontWeight:600,color:dashPendingInterviews.length?T.amber:undefined}}>{dashPendingInterviews.length}</div>
-                <div style={{fontSize:12,color:T.muted}}>Scheduled, not yet done</div>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:12,marginBottom:16}}>
+              <div className="card" style={{padding:16}}>
+                <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Pending Interviews</div>
+                <div style={{display:"flex",gap:16}}>
+                  <div><div style={{fontSize:22,fontWeight:600}}>{dashInterviewsUpcoming.length}</div><div style={{fontSize:11,color:T.muted}}>Upcoming</div></div>
+                  <div><div style={{fontSize:22,fontWeight:600,color:dashInterviewsToday.length?T.amber:undefined}}>{dashInterviewsToday.length}</div><div style={{fontSize:11,color:T.muted}}>Today</div></div>
+                  <div><div style={{fontSize:22,fontWeight:600,color:dashInterviewsPast.length?T.red:undefined}}>{dashInterviewsPast.length}</div><div style={{fontSize:11,color:T.muted}}>Past (critical)</div></div>
+                </div>
               </div>
-              <div className="card" style={{padding:16,background:dashStale.length?T.amberDim:undefined}}>
-                <div style={{fontSize:12,color:T.muted}}>Untouched (24h+)</div>
-                <div style={{fontSize:28,fontWeight:600,color:dashStale.length?T.amber:undefined}}>{dashStale.length}</div>
-                <div style={{fontSize:12,color:T.muted}}>No activity logged</div>
+              <div className="card" style={{padding:16}}>
+                <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Untouched Cases</div>
+                <div style={{display:"flex",gap:16}}>
+                  <div><div style={{fontSize:22,fontWeight:600,color:dashUntouchedToday.length?T.amber:undefined}}>{dashUntouchedToday.length}</div><div style={{fontSize:11,color:T.muted}}>Today</div></div>
+                  <div><div style={{fontSize:22,fontWeight:600,color:dashUntouchedPast.length?T.red:undefined}}>{dashUntouchedPast.length}</div><div style={{fontSize:11,color:T.muted}}>Past (critical)</div></div>
+                </div>
               </div>
             </div>
 
