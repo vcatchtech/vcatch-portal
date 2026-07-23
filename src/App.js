@@ -32,11 +32,11 @@ const DARK = {
   inputBg:"#12151D", shadow:"rgba(0,0,0,0.35)", shadowLg:"rgba(0,0,0,0.55)", mode:"dark",
 };
 const LIGHT = {
-  bg:"#F7F8FC", surface:"#FFFFFF", card:"#FFFFFF", border:"#E7EAF3",
-  accent:"#5457E5", accentDim:"#EEEEFC", green:"#0D9F6E", greenDim:"#E8FBF3",
-  red:"#E2373B", redDim:"#FEF0F0", amber:"#D97706", amberDim:"#FFF8E8",
-  purple:"#7C3AED", purpleDim:"#F5F1FE", text:"#12141C", muted:"#6B7385",
-  inputBg:"#FBFBFE", shadow:"rgba(15,23,42,0.05)", shadowLg:"rgba(15,23,42,0.14)", mode:"light",
+  bg:"#F4F5FA", surface:"#FFFFFF", card:"#FFFFFF", border:"#DFE3ED",
+  accent:"#4F52D9", accentDim:"#ECEDFB", green:"#0E8F63", greenDim:"#E6F7F0",
+  red:"#D23C3F", redDim:"#FBEDED", amber:"#B8790A", amberDim:"#FBF1DE",
+  purple:"#7238C9", purpleDim:"#F3EEFC", text:"#161822", muted:"#6B7280",
+  inputBg:"#FBFBFE", shadow:"rgba(15,23,42,0.06)", shadowLg:"rgba(15,23,42,0.16)", mode:"light",
 };
 
 let T = DARK;
