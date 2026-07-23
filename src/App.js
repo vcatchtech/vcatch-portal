@@ -2363,55 +2363,41 @@ function HireFlowCandidates({ showToast }) {
               <button className="btn btn-sm btn-ghost" onClick={()=>{setDashFrom(today());setDashTo(today());}}>Reset to Today</button>
             </div>
 
-            {(dashInterviewsPast.length>0||dashUntouchedPast.length>0)&&(
-              <div className="card" style={{padding:12,marginBottom:16,background:`${T.red}18`,border:`1px solid ${T.red}55`,display:"flex",alignItems:"center",gap:8}}>
-                <span style={{fontSize:16}}>⚠</span>
-                <div style={{fontSize:13,fontWeight:500,color:T.red}}>
-                  Critical: {dashInterviewsPast.length>0&&`${dashInterviewsPast.length} interview${dashInterviewsPast.length>1?"s":""} overdue`}
-                  {dashInterviewsPast.length>0&&dashUntouchedPast.length>0&&", "}
-                  {dashUntouchedPast.length>0&&`${dashUntouchedPast.length} candidate${dashUntouchedPast.length>1?"s":""} untouched for 2+ days`}
+            <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))"}}>
+              <div className="kpi-card">
+                <div className="kpi-label">Total Assigned</div>
+                <div className="kpi-value blue">{dashAssignedInRange.length}</div>
+                <div className="kpi-sub">{dashFrom===dashTo?dashFrom:`${dashFrom} → ${dashTo}`}</div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-label">Pending Interviews</div>
+                <div className={`kpi-value ${dashInterviewsPast.length?"red":""}`}>{dashInterviewsToday.length+dashInterviewsPast.length}</div>
+                <div className="kpi-sub" style={dashInterviewsPast.length?{color:T.red,fontWeight:600}:undefined}>
+                  {dashInterviewsPast.length?`${dashInterviewsPast.length} overdue`:dashInterviewsToday.length?"All on schedule":"None today"}
+                  {dashInterviewsUpcoming.length>0&&` · ${dashInterviewsUpcoming.length} upcoming`}
                 </div>
               </div>
-            )}
-
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:12}}>
-              <div className="card" style={{padding:16}}>
-                <div style={{fontSize:12,color:T.muted}}>Total Assigned</div>
-                <div style={{fontSize:28,fontWeight:600}}>{dashAssignedInRange.length}</div>
-                <div style={{fontSize:12,color:T.muted}}>{dashFrom===dashTo?dashFrom:`${dashFrom} → ${dashTo}`}</div>
-              </div>
-            </div>
-
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:12,marginBottom:16}}>
-              <div className="card" style={{padding:16}}>
-                <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Pending Interviews</div>
-                <div style={{display:"flex",gap:16}}>
-                  <div><div style={{fontSize:22,fontWeight:600}}>{dashInterviewsUpcoming.length}</div><div style={{fontSize:11,color:T.muted}}>Upcoming</div></div>
-                  <div><div style={{fontSize:22,fontWeight:600,color:dashInterviewsToday.length?T.amber:undefined}}>{dashInterviewsToday.length}</div><div style={{fontSize:11,color:T.muted}}>Today</div></div>
-                  <div><div style={{fontSize:22,fontWeight:600,color:dashInterviewsPast.length?T.red:undefined}}>{dashInterviewsPast.length}</div><div style={{fontSize:11,color:T.muted}}>Past (critical)</div></div>
-                </div>
-              </div>
-              <div className="card" style={{padding:16}}>
-                <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Untouched Cases</div>
-                <div style={{display:"flex",gap:16}}>
-                  <div><div style={{fontSize:22,fontWeight:600,color:dashUntouchedToday.length?T.amber:undefined}}>{dashUntouchedToday.length}</div><div style={{fontSize:11,color:T.muted}}>Today</div></div>
-                  <div><div style={{fontSize:22,fontWeight:600,color:dashUntouchedPast.length?T.red:undefined}}>{dashUntouchedPast.length}</div><div style={{fontSize:11,color:T.muted}}>Past (critical)</div></div>
+              <div className="kpi-card">
+                <div className="kpi-label">Untouched Cases</div>
+                <div className={`kpi-value ${dashUntouchedPast.length?"red":""}`}>{dashUntouchedToday.length+dashUntouchedPast.length}</div>
+                <div className="kpi-sub" style={dashUntouchedPast.length?{color:T.red,fontWeight:600}:undefined}>
+                  {dashUntouchedPast.length?`${dashUntouchedPast.length} critical (2+ days)`:dashUntouchedToday.length?"Since yesterday":"None"}
                 </div>
               </div>
             </div>
 
             <div className="card">
               <div className="card-header"><div className="card-title">Stage Breakdown — Assigned in Range</div></div>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>Stage</th><th>Count</th></tr></thead>
-                  <tbody>{dashStageBreakdown.map(({stage,count})=>(
-                    <tr key={stage.id}>
-                      <td><span className="badge" style={{background:stage.is_exit_stage?`${T.purple}22`:`${T.accent}22`,color:stage.is_exit_stage?T.purple:T.accent}}>{stage.name}</span></td>
-                      <td>{count}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
+              <div style={{padding:"8px 20px 20px"}}>
+                {(()=>{const max=Math.max(1,...dashStageBreakdown.map(s=>s.count));return dashStageBreakdown.map(({stage,count})=>(
+                  <div key={stage.id} style={{display:"flex",alignItems:"center",gap:12,padding:"7px 0"}} title={`${stage.name}: ${count}`}>
+                    <div style={{width:130,fontSize:12,color:T.muted,flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stage.name}</div>
+                    <div style={{flex:1,background:T.border,borderRadius:4,height:10,position:"relative"}}>
+                      <div style={{width:`${(count/max)*100}%`,minWidth:count?4:0,height:10,borderRadius:4,background:stage.is_exit_stage?T.purple:T.accent,transition:"width 0.3s ease"}}/>
+                    </div>
+                    <div style={{width:28,fontSize:12,fontWeight:600,color:T.text,textAlign:"right",flexShrink:0}}>{count}</div>
+                  </div>
+                ));})()}
               </div>
             </div>
           </>
