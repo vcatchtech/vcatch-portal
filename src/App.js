@@ -1933,8 +1933,8 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
   async function sendToIvr(){
     setSendingToIvr(true);
     try{
-      await renderFetch("/hireflow/send-to-ivr",{method:"POST",body:JSON.stringify({candidate_id:candidate.id})});
-      showToast("Sent to IVR follow-up queue","success");
+      const res=await renderFetch("/hireflow/send-to-ivr",{method:"POST",body:JSON.stringify({candidate_id:candidate.id})});
+      showToast(res.message||"Scheduled","success");
       onChanged();loadActivity();
     }catch(e){showToast(e.message||"Failed to send to IVR","error");}
     finally{setSendingToIvr(false);}
@@ -1998,7 +1998,7 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
             </div>
             <button className="btn btn-sm" onClick={reassign} disabled={busy} style={{alignSelf:"flex-end"}}>Reassign</button>
           </div>
-          <button className="btn btn-sm btn-amber" onClick={sendToIvr} disabled={sendingToIvr}>{sendingToIvr?"Calling...":"Send to IVR (didn't pick up)"}</button>
+          <button className="btn btn-sm btn-amber" onClick={sendToIvr} disabled={sendingToIvr}>{sendingToIvr?"Scheduling...":"Send to IVR (didn't pick up)"}</button>
         </div>
       </div>
 
@@ -2097,6 +2097,7 @@ function HireFlowCandidates({ showToast }) {
   const [uploading,setUploading]=useState(false);
   const fileRef=useRef();
 
+  const [pageTab,setPageTab]=useState("pipeline");
   const role=getRole();
   const myUserId=users.find(u=>u.email===getEmail())?.id;
   const reporteeIds=users.filter(u=>u.manager_id===myUserId).map(u=>u.id);
@@ -2227,14 +2228,21 @@ function HireFlowCandidates({ showToast }) {
     <div>
       <div className="page-header">
         <div><div className="page-title">HireFlow</div><div className="page-sub">Hiring funnel — from first contact to hired</div></div>
-        <div style={{display:"flex",gap:8}}>
-          <input ref={fileRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>handleUpload(e.target.files[0])}/>
-          <button className="btn btn-sm btn-ghost" onClick={()=>downloadCSV("hireflow_upload_template.csv",["name","phone","current salary","expected salary","location","process","position","source","language"],[["Jane Doe","9876543210","18000","22000","Bangalore","Cred","Calling Executive","Work India","Hindi, English"]])}>Download Template</button>
-          <button className="btn btn-sm btn-ghost" onClick={()=>fileRef.current?.click()} disabled={uploading}>{uploading?"Uploading...":"Upload CSV"}</button>
-          <button className="btn btn-sm" onClick={()=>setShowAdd(true)}>Add Candidate</button>
-        </div>
+        {pageTab==="pipeline"&&(
+          <div style={{display:"flex",gap:8}}>
+            <input ref={fileRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>handleUpload(e.target.files[0])}/>
+            <button className="btn btn-sm btn-ghost" onClick={()=>downloadCSV("hireflow_upload_template.csv",["name","phone","current salary","expected salary","location","process","position","source","language"],[["Jane Doe","9876543210","18000","22000","Bangalore","Cred","Calling Executive","Work India","Hindi, English"]])}>Download Template</button>
+            <button className="btn btn-sm btn-ghost" onClick={()=>fileRef.current?.click()} disabled={uploading}>{uploading?"Uploading...":"Upload CSV"}</button>
+            <button className="btn btn-sm" onClick={()=>setShowAdd(true)}>Add Candidate</button>
+          </div>
+        )}
       </div>
       <div className="page-content">
+        <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+          <button className={`btn btn-sm ${pageTab==="pipeline"?"":"btn-ghost"}`} onClick={()=>setPageTab("pipeline")}>Pipeline</button>
+          <button className={`btn btn-sm ${pageTab==="ivr"?"":"btn-ghost"}`} onClick={()=>setPageTab("ivr")}>IVR Interested</button>
+        </div>
+        {pageTab==="ivr"?<InterestedCandidates showToast={showToast}/>:(<>
         <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
           <input className="filter-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or phone" style={{maxWidth:220}}/>
           <select className="filter-select" value={stageFilter} onChange={e=>setStageFilter(e.target.value)}>
@@ -2284,6 +2292,7 @@ function HireFlowCandidates({ showToast }) {
             )}
           </div>
         </div>
+        </>)}
       </div>
 
       {selected&&(
@@ -2524,7 +2533,7 @@ export default function App() {
     {id:"hireflow-settings",label:"HireFlow Settings",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"campaigns",label:"IVR Campaigns",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"leads",label:"Leads",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"interested",label:"IVR Candidates",icon:"",roles:["ADMIN","MANAGER","HR"]},
+    {id:"interested",label:"IVR Interested Candidates",icon:"",roles:["ADMIN","MANAGER","HR"]},
     {id:"dnd",label:"IVR DND List",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"callerids",label:"IVR Caller IDs",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"audio",label:"IVR Audio Manager",icon:"",roles:["ADMIN","MANAGER"]},
