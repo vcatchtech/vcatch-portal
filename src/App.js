@@ -405,7 +405,7 @@ function LoginPage({ onLogin }) {
           <>
             <div style={{fontWeight:600,fontSize:16,marginBottom:4}}>Reset your password</div>
             <div style={{fontSize:13,color:T.muted,marginBottom:20}}>Enter your email and we'll send you a reset link.</div>
-            <div className="field"><label>Email</label><input type="email" value={resetEmail} onChange={e=>setResetEmail(e.target.value)} placeholder="hr@company.com" onKeyDown={e=>e.key==="Enter"&&handleForgot()}/></div>
+            <div className="field"><label>Email</label><input type="email" value={resetEmail} onChange={e=>setResetEmail(e.target.value)} placeholder="manuraj@vcatch.in" onKeyDown={e=>e.key==="Enter"&&handleForgot()}/></div>
             {error&&<div className="err" style={{marginBottom:8}}>{error}</div>}
             <button className="btn btn-full" onClick={handleForgot} disabled={resetLoading}>{resetLoading?"Sending...":"Send Reset Link"}</button>
             <button className="btn btn-ghost btn-full" style={{marginTop:8}} onClick={()=>{setShowForgot(false);setError("");}}>Back to login</button>
@@ -422,9 +422,10 @@ function LoginPage({ onLogin }) {
           <div style={{background:"#fff",borderRadius:12,padding:"12px 24px",display:"inline-block",marginBottom:8}}>
             <img src={LOGO_BASE64} alt="VCatch" style={{height:36,display:"block"}}/>
           </div>
-          <div className="login-sub">VCatch - HireFlow — Sign in to continue</div>
+          <div className="login-sub">Hire Flow VCatch</div>
+          <div className="login-sub">Sign in to continue</div>
         </div>
-        <div className="field"><label>Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="hr@company.com" onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
+        <div className="field"><label>Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="manuraj@vcatch.in" onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
         <div className="field"><label>Password</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
         <button className="btn btn-full" onClick={handleLogin} disabled={loading} style={{marginTop:8}}>{loading?"Signing in...":"Sign in"}</button>
         {error&&<div className="err">{error}</div>}
@@ -1919,7 +1920,7 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
     if(!reassignTo||reassignTo===candidate.assigned_to){showToast("Pick a different recruiter first","error");return;}
     setBusy(true);
     try{
-      await dbUpdate("candidates",`id=eq.${candidate.id}`,{assigned_to:reassignTo,updated_at:new Date().toISOString()});
+      await dbUpdate("candidates",`id=eq.${candidate.id}`,{assigned_to:reassignTo,assigned_at:new Date().toISOString(),updated_at:new Date().toISOString()});
       await dbInsert("candidate_activity",{
         candidate_id:candidate.id,type:"REASSIGNMENT",is_contact_attempt:false,
         remark:`Reassigned to ${userMap[reassignTo]?.name||userMap[reassignTo]?.email||"—"}`,changed_by:myUserId,
@@ -2095,9 +2096,16 @@ function HireFlowCandidates({ showToast }) {
   const [addForm,setAddForm]=useState({name:"",phone:"",process_id:"",position_type_id:"",source_id:"",assigned_to:"",languages_spoken:""});
   const [adding,setAdding]=useState(false);
   const [uploading,setUploading]=useState(false);
+  const [uploadAssignees,setUploadAssignees]=useState([]);
+  const [selectedIds,setSelectedIds]=useState([]);
+  const [bulkAssignTo,setBulkAssignTo]=useState("");
+  const [bulkAssigning,setBulkAssigning]=useState(false);
   const fileRef=useRef();
 
-  const [pageTab,setPageTab]=useState("pipeline");
+  const [pageTab,setPageTab]=useState("dashboard");
+  const [dashFrom,setDashFrom]=useState(today());
+  const [dashTo,setDashTo]=useState(today());
+  const [dashRecruiter,setDashRecruiter]=useState("");
   const role=getRole();
   const myUserId=users.find(u=>u.email===getEmail())?.id;
   const reporteeIds=users.filter(u=>u.manager_id===myUserId).map(u=>u.id);
@@ -2153,6 +2161,32 @@ function HireFlowCandidates({ showToast }) {
     return true;
   });
 
+  // ---- Dashboard ----
+  const dashScoped=candidates.filter(c=>{
+    if(role==="HR")return c.assigned_to===myUserId;
+    if(role==="MANAGER"){
+      if(!(reporteeIds.includes(c.assigned_to)||c.assigned_to===myUserId))return false;
+    }
+    if(dashRecruiter&&c.assigned_to!==dashRecruiter)return false;
+    return true;
+  });
+  const dashAssignedInRange=dashScoped.filter(c=>{
+    if(!c.assigned_at)return false;
+    const d=new Date(c.assigned_at).toISOString().split("T")[0];
+    return d>=dashFrom&&d<=dashTo;
+  });
+  const dashStageBreakdown=funnelStages.map(s=>({
+    stage:s,count:dashAssignedInRange.filter(c=>c.current_stage_id===s.id).length,
+  }));
+  const dashPendingInterviews=dashScoped.filter(c=>{
+    if(!c.interview_scheduled_at)return false;
+    const d=new Date(c.interview_scheduled_at).toISOString().split("T")[0];
+    if(d<dashFrom||d>dashTo)return false;
+    return stageMap[c.current_stage_id]?.name==="Interview Scheduled";
+  });
+  const dashStale=dashScoped.filter(isStale);
+  const dashRecruiterOptions=role==="ADMIN"?users:role==="MANAGER"?users.filter(u=>reporteeIds.includes(u.id)||u.id===myUserId):[];
+
   async function addCandidate(){
     const phone=addForm.phone.replace(/\D/g,"");
     if(!addForm.name.trim()||!phone){showToast("Name and phone required","error");return;}
@@ -2167,13 +2201,20 @@ function HireFlowCandidates({ showToast }) {
         setAdding(false);return;
       }
       const newStage=funnelStages.find(s=>s.name==="New");
-      await dbInsert("candidates",{
+      const inserted=await dbInsert("candidates",{
         name:addForm.name.trim(),phone,
         process_id:addForm.process_id||null,position_type_id:addForm.position_type_id||null,
         source_id:addForm.source_id||null,assigned_to:addForm.assigned_to||null,
+        assigned_at:addForm.assigned_to?new Date().toISOString():null,
         languages_spoken:addForm.languages_spoken||null,
         current_stage_id:newStage?.id||null,uploaded_by:myUserId,
       });
+      if(addForm.assigned_to&&inserted?.[0]?.id){
+        await dbInsert("candidate_activity",{
+          candidate_id:inserted[0].id,type:"ASSIGNMENT",is_contact_attempt:false,
+          remark:`Assigned to ${userMap[addForm.assigned_to]?.name||userMap[addForm.assigned_to]?.email||"—"} on add`,changed_by:myUserId,
+        });
+      }
       showToast("Candidate added","success");
       setShowAdd(false);setAddForm({name:"",phone:"",process_id:"",position_type_id:"",source_id:"",assigned_to:"",languages_spoken:""});
       loadAll();
@@ -2207,6 +2248,7 @@ function HireFlowCandidates({ showToast }) {
 
         existingPhones.add(phone);
         const matchedSource=leadSources.find(s=>s.name.toLowerCase()===(row.source||"").trim().toLowerCase());
+        const assignedTo=uploadAssignees.length?uploadAssignees[added%uploadAssignees.length]:null;
         payload.push({
           name,phone,
           current_salary:row["current salary"]||null,expected_salary:row["expected salary"]||null,
@@ -2214,14 +2256,57 @@ function HireFlowCandidates({ showToast }) {
           process_id:matchedProcess?.id||null,position_type_id:matchedPosition?.id||null,
           languages_spoken:row.language||row["language spoken"]||null,
           current_stage_id:newStage?.id||null,uploaded_by:myUserId,
+          assigned_to:assignedTo,assigned_at:assignedTo?new Date().toISOString():null,
         });
         added++;
       });
-      if(payload.length)await dbInsert("candidates",payload);
+      let inserted=[];
+      if(payload.length)inserted=await dbInsert("candidates",payload);
+      const assignedRows=(inserted||[]).filter(c=>c.assigned_to);
+      if(assignedRows.length){
+        await dbInsert("candidate_activity",assignedRows.map(c=>({
+          candidate_id:c.id,type:"ASSIGNMENT",is_contact_attempt:false,
+          remark:`Assigned to ${userMap[c.assigned_to]?.name||userMap[c.assigned_to]?.email||"—"} on upload (round-robin)`,changed_by:myUserId,
+        })));
+      }
       showToast(`${added} added, ${skippedDup} duplicates, ${skippedUnmatched} unmatched process/position, ${skippedInvalid} invalid rows skipped`,added?"success":"error");
+      setUploadAssignees([]);
       loadAll();
     }catch{showToast("Upload failed","error");}
     finally{setUploading(false);if(fileRef.current)fileRef.current.value="";}
+  }
+
+  async function takeCandidate(c){
+    try{
+      await dbUpdate("candidates",`id=eq.${c.id}`,{assigned_to:myUserId,assigned_at:new Date().toISOString(),updated_at:new Date().toISOString()});
+      await dbInsert("candidate_activity",{
+        candidate_id:c.id,type:"ASSIGNMENT",is_contact_attempt:false,
+        remark:`Taken by ${userMap[myUserId]?.name||userMap[myUserId]?.email||"—"}`,changed_by:myUserId,
+      });
+      showToast("Candidate taken","success");
+      loadAll();
+    }catch{showToast("Failed to take candidate","error");}
+  }
+
+  async function bulkAssign(){
+    if(!bulkAssignTo||!selectedIds.length){showToast("Pick a recruiter and at least one candidate","error");return;}
+    setBulkAssigning(true);
+    try{
+      const idList=selectedIds.join(",");
+      await dbUpdate("candidates",`id=in.(${idList})`,{assigned_to:bulkAssignTo,assigned_at:new Date().toISOString(),updated_at:new Date().toISOString()});
+      await dbInsert("candidate_activity",selectedIds.map(id=>({
+        candidate_id:id,type:"ASSIGNMENT",is_contact_attempt:false,
+        remark:`Bulk assigned to ${userMap[bulkAssignTo]?.name||userMap[bulkAssignTo]?.email||"—"}`,changed_by:myUserId,
+      })));
+      showToast(`${selectedIds.length} candidates assigned`,"success");
+      setSelectedIds([]);setBulkAssignTo("");
+      loadAll();
+    }catch{showToast("Failed to bulk assign","error");}
+    finally{setBulkAssigning(false);}
+  }
+
+  function toggleSelect(id){
+    setSelectedIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
   }
 
   return(
@@ -2231,6 +2316,9 @@ function HireFlowCandidates({ showToast }) {
         {pageTab==="pipeline"&&(
           <div style={{display:"flex",gap:8}}>
             <input ref={fileRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>handleUpload(e.target.files[0])}/>
+            <select multiple size={3} className="filter-select" title="Optional: select one or more recruiters to round-robin assign uploaded rows" value={uploadAssignees} onChange={e=>setUploadAssignees(Array.from(e.target.selectedOptions,o=>o.value))} style={{minWidth:160}}>
+              {users.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+            </select>
             <button className="btn btn-sm btn-ghost" onClick={()=>downloadCSV("hireflow_upload_template.csv",["name","phone","current salary","expected salary","location","process","position","source","language"],[["Jane Doe","9876543210","18000","22000","Bangalore","Cred","Calling Executive","Work India","Hindi, English"]])}>Download Template</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>fileRef.current?.click()} disabled={uploading}>{uploading?"Uploading...":"Upload CSV"}</button>
             <button className="btn btn-sm" onClick={()=>setShowAdd(true)}>Add Candidate</button>
@@ -2239,10 +2327,60 @@ function HireFlowCandidates({ showToast }) {
       </div>
       <div className="page-content">
         <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+          <button className={`btn btn-sm ${pageTab==="dashboard"?"":"btn-ghost"}`} onClick={()=>setPageTab("dashboard")}>Dashboard</button>
           <button className={`btn btn-sm ${pageTab==="pipeline"?"":"btn-ghost"}`} onClick={()=>setPageTab("pipeline")}>Pipeline</button>
           <button className={`btn btn-sm ${pageTab==="ivr"?"":"btn-ghost"}`} onClick={()=>setPageTab("ivr")}>IVR Interested</button>
         </div>
-        {pageTab==="ivr"?<InterestedCandidates showToast={showToast}/>:(<>
+        {pageTab==="dashboard"?(
+          <>
+            <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+              <div className="field" style={{margin:0}}><label>From</label><input type="date" value={dashFrom} onChange={e=>setDashFrom(e.target.value)}/></div>
+              <div className="field" style={{margin:0}}><label>To</label><input type="date" value={dashTo} onChange={e=>setDashTo(e.target.value)}/></div>
+              {["ADMIN","MANAGER"].includes(role)&&(
+                <div className="field" style={{margin:0}}><label>Recruiter</label>
+                  <select className="filter-select" value={dashRecruiter} onChange={e=>setDashRecruiter(e.target.value)}>
+                    <option value="">{role==="ADMIN"?"Everyone":"My Team"}</option>
+                    {dashRecruiterOptions.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+                  </select>
+                </div>
+              )}
+              <button className="btn btn-sm btn-ghost" onClick={()=>{setDashFrom(today());setDashTo(today());}}>Reset to Today</button>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:16}}>
+              <div className="card" style={{padding:16}}>
+                <div style={{fontSize:12,color:T.muted}}>Total Assigned</div>
+                <div style={{fontSize:28,fontWeight:600}}>{dashAssignedInRange.length}</div>
+                <div style={{fontSize:12,color:T.muted}}>{dashFrom===dashTo?dashFrom:`${dashFrom} → ${dashTo}`}</div>
+              </div>
+              <div className="card" style={{padding:16,background:dashPendingInterviews.length?T.amberDim:undefined}}>
+                <div style={{fontSize:12,color:T.muted}}>Pending Interviews</div>
+                <div style={{fontSize:28,fontWeight:600,color:dashPendingInterviews.length?T.amber:undefined}}>{dashPendingInterviews.length}</div>
+                <div style={{fontSize:12,color:T.muted}}>Scheduled, not yet done</div>
+              </div>
+              <div className="card" style={{padding:16,background:dashStale.length?T.amberDim:undefined}}>
+                <div style={{fontSize:12,color:T.muted}}>Untouched (24h+)</div>
+                <div style={{fontSize:28,fontWeight:600,color:dashStale.length?T.amber:undefined}}>{dashStale.length}</div>
+                <div style={{fontSize:12,color:T.muted}}>No activity logged</div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header"><div className="card-title">Stage Breakdown — Assigned in Range</div></div>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Stage</th><th>Count</th></tr></thead>
+                  <tbody>{dashStageBreakdown.map(({stage,count})=>(
+                    <tr key={stage.id}>
+                      <td><span className="badge" style={{background:stage.is_exit_stage?`${T.purple}22`:`${T.accent}22`,color:stage.is_exit_stage?T.purple:T.accent}}>{stage.name}</span></td>
+                      <td>{count}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        ):pageTab==="ivr"?<InterestedCandidates showToast={showToast}/>:(<>
         <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
           <input className="filter-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or phone" style={{maxWidth:220}}/>
           <select className="filter-select" value={stageFilter} onChange={e=>setStageFilter(e.target.value)}>
@@ -2262,12 +2400,23 @@ function HireFlowCandidates({ showToast }) {
           )}
         </div>
 
+        {["ADMIN","MANAGER"].includes(role)&&selectedIds.length>0&&(
+          <div className="card" style={{display:"flex",gap:8,alignItems:"center",padding:12,marginBottom:16}}>
+            <div style={{fontSize:13,fontWeight:500}}>{selectedIds.length} selected</div>
+            <select className="filter-select" value={bulkAssignTo} onChange={e=>setBulkAssignTo(e.target.value)}>
+              <option value="">Assign to…</option>{users.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+            </select>
+            <button className="btn btn-sm" onClick={bulkAssign} disabled={bulkAssigning||!bulkAssignTo}>{bulkAssigning?"Assigning...":"Assign"}</button>
+            <button className="btn btn-sm btn-ghost" onClick={()=>setSelectedIds([])}>Clear</button>
+          </div>
+        )}
+
         <div className="card">
           <div className="card-header"><div className="card-title">Candidates ({filtered.length})</div><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div>
           <div className="table-wrap">
             {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No candidates found</div></div>:(
               <table>
-                <thead><tr><th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Stage</th><th>Assigned To</th><th>Contacted</th><th>Last Activity</th></tr></thead>
+                <thead><tr>{["ADMIN","MANAGER"].includes(role)&&<th style={{width:32}}></th>}<th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Stage</th><th>Assigned To</th><th>Contacted</th><th>Last Activity</th></tr></thead>
                 <tbody>{filtered.map(c=>{
                   const stage=stageMap[c.current_stage_id];
                   const owner=userMap[c.assigned_to];
@@ -2275,12 +2424,21 @@ function HireFlowCandidates({ showToast }) {
                   const stale=isStale(c);
                   return(
                     <tr key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer",background:stale?T.amberDim:"transparent"}}>
+                      {["ADMIN","MANAGER"].includes(role)&&(
+                        <td onClick={e=>e.stopPropagation()}>
+                          <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={()=>toggleSelect(c.id)}/>
+                        </td>
+                      )}
                       <td style={{fontWeight:500}}>{c.name}</td>
                       <td style={{fontFamily:"monospace"}}>{c.phone}</td>
                       <td>{processMap[c.process_id]||"—"}</td>
                       <td>{positionMap[c.position_type_id]||"—"}</td>
                       <td><span className="badge" style={{background:stage?.is_exit_stage?`${T.purple}22`:`${T.accent}22`,color:stage?.is_exit_stage?T.purple:T.accent}}>{stage?.name||"—"}</span></td>
-                      <td>{owner?.name||owner?.email||"Unassigned"}</td>
+                      <td>
+                        {owner?(owner.name||owner.email):(
+                          <button className="btn btn-sm btn-ghost" onClick={e=>{e.stopPropagation();takeCandidate(c);}}>Take</button>
+                        )}
+                      </td>
                       <td>{summary?.count||0}x</td>
                       <td style={{fontSize:12,color:stale?T.amber:T.muted}}>
                         {summary?.last?new Date(summary.last).toLocaleDateString("en-IN"):"Never"}{stale&&" — STALE"}
@@ -2556,7 +2714,7 @@ export default function App() {
             <div style={{background:"#fff",borderRadius:8,padding:"6px 12px",display:"inline-block",marginBottom:4}}>
               <img src={LOGO_BASE64} alt="VCatch" style={{height:24,display:"block"}}/>
             </div>
-            <div className="sidebar-tagline">VCatch - HireFlow</div>
+            <div className="sidebar-tagline">Hire Flow VCatch</div>
           </div>
           <nav className="nav">
             <div className="nav-section">Menu</div>
