@@ -2090,7 +2090,7 @@ function HireFlowCandidates({ showToast }) {
   const [search,setSearch]=useState("");
   const [stageFilter,setStageFilter]=useState("ALL");
   const [processFilter,setProcessFilter]=useState("ALL");
-  const [scopeFilter,setScopeFilter]=useState("ALL");
+  const [scopeFilter,setScopeFilter]=useState(getRole()==="HR"?"MINE":"ALL");
   const [selected,setSelected]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
   const [addForm,setAddForm]=useState({name:"",phone:"",process_id:"",position_type_id:"",source_id:"",assigned_to:"",languages_spoken:""});
