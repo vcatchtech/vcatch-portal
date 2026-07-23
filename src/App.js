@@ -2107,6 +2107,7 @@ function HireFlowCandidates({ showToast }) {
   const [adding,setAdding]=useState(false);
   const [uploading,setUploading]=useState(false);
   const [uploadAssignees,setUploadAssignees]=useState([]);
+  const [showAssigneePicker,setShowAssigneePicker]=useState(false);
   const [selectedIds,setSelectedIds]=useState([]);
   const [bulkAssignTo,setBulkAssignTo]=useState("");
   const [bulkAssigning,setBulkAssigning]=useState(false);
@@ -2334,9 +2335,25 @@ function HireFlowCandidates({ showToast }) {
         {pageTab==="pipeline"&&(
           <div style={{display:"flex",gap:8}}>
             <input ref={fileRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>handleUpload(e.target.files[0])}/>
-            <select multiple size={3} className="filter-select" title="Optional: select one or more recruiters to round-robin assign uploaded rows" value={uploadAssignees} onChange={e=>setUploadAssignees(Array.from(e.target.selectedOptions,o=>o.value))} style={{minWidth:160}}>
-              {users.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
-            </select>
+            <div style={{position:"relative"}}>
+              <button className="btn btn-sm btn-ghost" onClick={()=>setShowAssigneePicker(v=>!v)} title="Optional: pick recruiters to round-robin assign uploaded rows to">
+                {uploadAssignees.length?`Round-robin (${uploadAssignees.length})`:"Round-robin: Off"}
+              </button>
+              {showAssigneePicker&&(
+                <>
+                  <div style={{position:"fixed",inset:0,zIndex:19}} onClick={()=>setShowAssigneePicker(false)}/>
+                  <div className="card" style={{position:"absolute",top:"calc(100% + 6px)",left:0,zIndex:20,width:220,maxHeight:240,overflowY:"auto",padding:8,margin:0}}>
+                    {users.map(u=>(
+                      <label key={u.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",fontSize:13,cursor:"pointer",borderRadius:6}}>
+                        <input type="checkbox" checked={uploadAssignees.includes(u.id)} onChange={()=>setUploadAssignees(prev=>prev.includes(u.id)?prev.filter(x=>x!==u.id):[...prev,u.id])}/>
+                        {u.name||u.email}
+                      </label>
+                    ))}
+                    {uploadAssignees.length>0&&<button className="btn btn-sm btn-ghost" style={{width:"100%",marginTop:4}} onClick={()=>setUploadAssignees([])}>Clear</button>}
+                  </div>
+                </>
+              )}
+            </div>
             <button className="btn btn-sm btn-ghost" onClick={()=>downloadCSV("hireflow_upload_template.csv",["name","phone","current salary","expected salary","location","process","position","source","language"],[["Jane Doe","9876543210","18000","22000","Bangalore","Cred","Calling Executive","Work India","Hindi, English"]])}>Download Template</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>fileRef.current?.click()} disabled={uploading}>{uploading?"Uploading...":"Upload CSV"}</button>
             <button className="btn btn-sm" onClick={()=>setShowAdd(true)}>Add Candidate</button>
