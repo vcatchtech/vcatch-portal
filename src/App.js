@@ -2188,26 +2188,36 @@ function HireFlowCandidates({ showToast }) {
       const rows=parseCSV(text);
       const existingPhones=new Set(candidates.map(c=>c.phone));
       const newStage=funnelStages.find(s=>s.name==="New");
-      let added=0,skippedDup=0,skippedInvalid=0;
+      let added=0,skippedDup=0,skippedInvalid=0,skippedUnmatched=0;
       const payload=[];
       rows.forEach(row=>{
         const phone=(row.phone||row.number||"").replace(/\D/g,"");
         const name=row.name||row.candidate||"";
         if(!phone||phone.length!==10||!name){skippedInvalid++;return;}
         if(existingPhones.has(phone)){skippedDup++;return;}
+
+        const processText=(row.process||"").trim();
+        const matchedProcess=processText?processes.find(p=>p.name.toLowerCase()===processText.toLowerCase()):null;
+        if(processText&&!matchedProcess){skippedUnmatched++;return;}
+
+        const positionText=(row.position||"").trim();
+        const matchedPosition=positionText?positionTypes.find(p=>p.name.toLowerCase()===positionText.toLowerCase()):null;
+        if(positionText&&!matchedPosition){skippedUnmatched++;return;}
+
         existingPhones.add(phone);
         const matchedSource=leadSources.find(s=>s.name.toLowerCase()===(row.source||"").trim().toLowerCase());
         payload.push({
           name,phone,
           current_salary:row["current salary"]||null,expected_salary:row["expected salary"]||null,
           location:row.location||null,source_id:matchedSource?.id||null,
+          process_id:matchedProcess?.id||null,position_type_id:matchedPosition?.id||null,
           languages_spoken:row.language||row["language spoken"]||null,
           current_stage_id:newStage?.id||null,uploaded_by:myUserId,
         });
         added++;
       });
       if(payload.length)await dbInsert("candidates",payload);
-      showToast(`${added} added, ${skippedDup} duplicates skipped, ${skippedInvalid} invalid rows skipped`,added?"success":"error");
+      showToast(`${added} added, ${skippedDup} duplicates, ${skippedUnmatched} unmatched process/position, ${skippedInvalid} invalid rows skipped`,added?"success":"error");
       loadAll();
     }catch{showToast("Upload failed","error");}
     finally{setUploading(false);if(fileRef.current)fileRef.current.value="";}
@@ -2219,7 +2229,7 @@ function HireFlowCandidates({ showToast }) {
         <div><div className="page-title">HireFlow</div><div className="page-sub">Hiring funnel — from first contact to hired</div></div>
         <div style={{display:"flex",gap:8}}>
           <input ref={fileRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>handleUpload(e.target.files[0])}/>
-          <button className="btn btn-sm btn-ghost" onClick={()=>downloadCSV("hireflow_upload_template.csv",["name","phone","current salary","expected salary","location","source","language"],[["Jane Doe","9876543210","18000","22000","Bangalore","Work India","Hindi, English"]])}>Download Template</button>
+          <button className="btn btn-sm btn-ghost" onClick={()=>downloadCSV("hireflow_upload_template.csv",["name","phone","current salary","expected salary","location","process","position","source","language"],[["Jane Doe","9876543210","18000","22000","Bangalore","Cred","Calling Executive","Work India","Hindi, English"]])}>Download Template</button>
           <button className="btn btn-sm btn-ghost" onClick={()=>fileRef.current?.click()} disabled={uploading}>{uploading?"Uploading...":"Upload CSV"}</button>
           <button className="btn btn-sm" onClick={()=>setShowAdd(true)}>Add Candidate</button>
         </div>
