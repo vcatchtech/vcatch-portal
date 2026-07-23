@@ -2333,16 +2333,14 @@ function HireFlowCandidates({ showToast }) {
         </div>
         {pageTab==="dashboard"?(
           <>
-            <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
-              <div className="field" style={{margin:0}}><label>From</label><input type="date" value={dashFrom} onChange={e=>setDashFrom(e.target.value)}/></div>
-              <div className="field" style={{margin:0}}><label>To</label><input type="date" value={dashTo} onChange={e=>setDashTo(e.target.value)}/></div>
+            <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+              <input type="date" className="filter-input" value={dashFrom} onChange={e=>setDashFrom(e.target.value)} title="From date"/>
+              <input type="date" className="filter-input" value={dashTo} onChange={e=>setDashTo(e.target.value)} title="To date"/>
               {["ADMIN","MANAGER"].includes(role)&&(
-                <div className="field" style={{margin:0}}><label>Recruiter</label>
-                  <select className="filter-select" value={dashRecruiter} onChange={e=>setDashRecruiter(e.target.value)}>
-                    <option value="">{role==="ADMIN"?"Everyone":"My Team"}</option>
-                    {dashRecruiterOptions.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
-                  </select>
-                </div>
+                <select className="filter-select" value={dashRecruiter} onChange={e=>setDashRecruiter(e.target.value)}>
+                  <option value="">{role==="ADMIN"?"Everyone":"My Team"}</option>
+                  {dashRecruiterOptions.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+                </select>
               )}
               <button className="btn btn-sm btn-ghost" onClick={()=>{setDashFrom(today());setDashTo(today());}}>Reset to Today</button>
             </div>
