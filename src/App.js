@@ -496,7 +496,6 @@ function Dashboard({ showToast, role }) {
 
   const connRate=stats?.total?Math.round(((stats.total-stats.notConnected)/stats.total)*100):0;
   const isActive=dialerStatus?.dialer?.is_active;
-  const canControl=isManager();
 
   return(
     <div>
@@ -523,10 +522,10 @@ function Dashboard({ showToast, role }) {
             </div>}
             {!isActive&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>No campaign running. Go to Campaigns → Start.</div>}
           </div>
-          {canControl&&<div className="input-row" style={{gap:8}}>
+          <div className="input-row" style={{gap:8}}>
             <div className="field" style={{marginBottom:0,minWidth:160}}><input value={testPhone} onChange={e=>setTestPhone(e.target.value)} placeholder="Test call number" onKeyDown={e=>e.key==="Enter"&&sendTestCall()} style={{fontSize:13}}/></div>
             <button className="btn btn-sm btn-amber" onClick={sendTestCall} disabled={testLoading} title="Send test call">{testLoading?"...":"Test"}</button>
-          </div>}
+          </div>
         </div>
 
         {/* KPIs */}
