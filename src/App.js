@@ -543,25 +543,18 @@ function Dashboard({ showToast, role }) {
   return(
     <div>
       <div className="page-header" style={{position:"static"}}>
-        <div><div className="page-title">Dashboard</div><div className="page-sub">Live overview — {dateFrom||dateTo?"filtered":"all time"}</div></div>
-        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-          <input type="date" className="filter-input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
-          <span style={{color:T.muted,fontSize:12}}>to</span>
-          <input type="date" className="filter-input" value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
-          <select className="filter-select" value={campaignFilter} onChange={e=>setCampaignFilter(e.target.value)}>
-            <option value="">All Campaigns</option>
-            {campaignList.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
-          </select>
-          {(dateFrom||dateTo||campaignFilter)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setDateFrom("");setDateTo("");setCampaignFilter("");}}>✕ Clear</button>}
-          <button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button>
-        </div>
+        <div><div className="page-title">Dashboard</div><div className="page-sub">Live overview</div></div>
+        <button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button>
       </div>
       <div className="page-content">
         {/* HireFlow Overview */}
         {hfSummary&&(
-          <div className="card">
-            <div className="card-header" style={{flexWrap:"wrap",gap:8}}>
-              <div className="card-title">Hire Flow</div>
+          <div style={{marginBottom:28}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,marginBottom:12,paddingBottom:10,borderBottom:`2px solid ${T.accent}`}}>
+              <div>
+                <div style={{fontSize:16,fontWeight:700,color:T.text}}>Hire Flow Dashboard</div>
+                <div style={{fontSize:12,color:T.muted}}>Hiring pipeline snapshot</div>
+              </div>
               <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                 <input type="date" className="filter-input" value={hfDateFrom} onChange={e=>setHfDateFrom(e.target.value)} title="From date"/>
                 <input type="date" className="filter-input" value={hfDateTo} onChange={e=>setHfDateTo(e.target.value)} title="To date"/>
@@ -575,36 +568,56 @@ function Dashboard({ showToast, role }) {
                 <button className="btn btn-sm btn-ghost" onClick={()=>{setHfDateFrom(today());setHfDateTo(today());}}>Today</button>
               </div>
             </div>
-            <div className="card-body" style={{padding:"12px 20px"}}>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10}}>
-                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Total Candidates</div>
-                  <div style={{fontSize:20,fontWeight:700,color:T.accent}}>{hfSummary.total}</div>
-                </div>
-                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>In Pipeline</div>
-                  <div style={{fontSize:20,fontWeight:700}}>{hfSummary.inPipeline}</div>
-                </div>
-                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Hired</div>
-                  <div style={{fontSize:20,fontWeight:700,color:T.green}}>{hfSummary.hired}</div>
-                </div>
-                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Rejected</div>
-                  <div style={{fontSize:20,fontWeight:700,color:T.red}}>{hfSummary.rejected}</div>
-                </div>
-                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Not Interested</div>
-                  <div style={{fontSize:20,fontWeight:700,color:T.amber}}>{hfSummary.notInterested}</div>
-                </div>
-                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Conversion</div>
-                  <div style={{fontSize:20,fontWeight:700,color:T.accent}}>{hfSummary.conversion}%</div>
+            <div className="card">
+              <div className="card-body" style={{padding:"12px 20px"}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10}}>
+                  <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Total Candidates</div>
+                    <div style={{fontSize:20,fontWeight:700,color:T.accent}}>{hfSummary.total}</div>
+                  </div>
+                  <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>In Pipeline</div>
+                    <div style={{fontSize:20,fontWeight:700}}>{hfSummary.inPipeline}</div>
+                  </div>
+                  <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Hired</div>
+                    <div style={{fontSize:20,fontWeight:700,color:T.green}}>{hfSummary.hired}</div>
+                  </div>
+                  <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Rejected</div>
+                    <div style={{fontSize:20,fontWeight:700,color:T.red}}>{hfSummary.rejected}</div>
+                  </div>
+                  <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Not Interested</div>
+                    <div style={{fontSize:20,fontWeight:700,color:T.amber}}>{hfSummary.notInterested}</div>
+                  </div>
+                  <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Conversion</div>
+                    <div style={{fontSize:20,fontWeight:700,color:T.accent}}>{hfSummary.conversion}%</div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         )}
+
+        {/* IVR Dashboard */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,marginBottom:12,paddingBottom:10,borderBottom:`2px solid ${T.purple}`}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:700,color:T.text}}>IVR Dashboard</div>
+            <div style={{fontSize:12,color:T.muted}}>{dateFrom||dateTo?"Filtered period":"All time"} calling activity</div>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <input type="date" className="filter-input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
+            <span style={{color:T.muted,fontSize:12}}>to</span>
+            <input type="date" className="filter-input" value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
+            <select className="filter-select" value={campaignFilter} onChange={e=>setCampaignFilter(e.target.value)}>
+              <option value="">All Campaigns</option>
+              {campaignList.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+            </select>
+            {(dateFrom||dateTo||campaignFilter)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setDateFrom("");setDateTo("");setCampaignFilter("");}}>✕ Clear</button>}
+          </div>
+        </div>
 
         {/* Dialer Status Bar */}
         <div className="dialer-bar">
