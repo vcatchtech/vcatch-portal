@@ -479,8 +479,13 @@ function Dashboard({ showToast, role }) {
   useEffect(()=>{loadStats();},[dateFrom,dateTo,campaignFilter]);
   useEffect(()=>{loadHireFlowSummary();},[hfDateFrom,hfDateTo,hfAssignedTo,hfMyUserId]);
   useEffect(()=>{
-    if(!hfAssignedInit&&hfMyUserId){setHfAssignedTo(hfMyUserId);setHfAssignedInit(true);}
-  },[hfMyUserId,hfAssignedInit]);
+    // CEO (and, since candidates can never be assigned to Admin, Admin too)
+    // should default to the company-wide aggregate, not a "your own cases"
+    // view that would show ~nothing and can't be undone (no filter UI is
+    // shown to them). Only HR/Manager — who can actually own candidates —
+    // get the self-scoped default.
+    if(!hfAssignedInit&&hfMyUserId&&["HR","MANAGER"].includes(role)){setHfAssignedTo(hfMyUserId);setHfAssignedInit(true);}
+  },[hfMyUserId,hfAssignedInit,role]);
 
   async function loadAll(){await Promise.all([loadStats(),loadDialerStatus(),loadHireFlowSummary()]);}
 
@@ -2086,6 +2091,174 @@ function IVRQueue({ showToast }) {
   );
 }
 
+// ================================================
+// POSITION OPENINGS (separate module — Admin/Manager/CEO only)
+// ================================================
+function PositionOpenings({ showToast }) {
+  const [tab,setTab]=useState("openings");
+  const [openings,setOpenings]=useState([]);
+  const [companies,setCompanies]=useState([]);
+  const [processes,setProcesses]=useState([]);
+  const [positionTypes,setPositionTypes]=useState([]);
+  const [candidates,setCandidates]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [statusFilter,setStatusFilter]=useState("OPEN");
+  const [form,setForm]=useState({company_id:"",process_id:"",position_type_id:"",target_count:1,note:""});
+  const [creating,setCreating]=useState(false);
+  const myUserId=useRef(null);
+
+  useEffect(()=>{load();},[]);
+
+  async function load(){
+    setLoading(true);
+    try{
+      const [ops,comps,procs,posTypes,users,cands]=await Promise.all([
+        dbSelect("position_openings","?select=*&order=created_at.desc"),
+        dbSelect("companies","?select=*&order=name"),
+        dbSelect("processes","?select=*&order=name"),
+        dbSelect("position_types","?select=*&order=name"),
+        dbSelect("user_roles","?select=id,name,email"),
+        dbSelect("candidates","?select=id,filled_opening_id&filled_opening_id=not.is.null"),
+      ]);
+      setOpenings(ops);setCompanies(comps);setProcesses(procs);setPositionTypes(posTypes);setCandidates(cands);
+      const me=users.find(u=>u.email===getEmail());
+      myUserId.current=me?.id||null;
+    }catch(e){showToast("Failed to load position openings","error");}
+    finally{setLoading(false);}
+  }
+
+  const companyMap=Object.fromEntries(companies.map(c=>[c.id,c.name]));
+  const processMap=Object.fromEntries(processes.map(p=>[p.id,p.name]));
+  const positionMap=Object.fromEntries(positionTypes.map(p=>[p.id,p.name]));
+  const filledCountByOpening={};
+  candidates.forEach(c=>{if(c.filled_opening_id)filledCountByOpening[c.filled_opening_id]=(filledCountByOpening[c.filled_opening_id]||0)+1;});
+
+  async function createOpening(){
+    if(!form.company_id||!form.process_id||!form.position_type_id){showToast("Pick company, process, and position","error");return;}
+    if(!form.target_count||form.target_count<1){showToast("Target headcount must be at least 1","error");return;}
+    setCreating(true);
+    try{
+      await dbInsert("position_openings",{
+        company_id:form.company_id,process_id:form.process_id,position_type_id:form.position_type_id,
+        target_count:Number(form.target_count),note:form.note.trim()||null,status:"OPEN",created_by:myUserId.current,
+      });
+      showToast("Position opened","success");
+      setForm({company_id:"",process_id:"",position_type_id:"",target_count:1,note:""});
+      load();
+    }catch{showToast("Failed to open position — may already exist","error");}
+    finally{setCreating(false);}
+  }
+
+  async function closeOpening(id){
+    try{await dbUpdate("position_openings",`id=eq.${id}`,{status:"CLOSED",closed_at:new Date().toISOString()});showToast("Closed","success");load();}
+    catch{showToast("Failed to close","error");}
+  }
+  async function reopenOpening(id){
+    try{await dbUpdate("position_openings",`id=eq.${id}`,{status:"OPEN",closed_at:null});showToast("Reopened","success");load();}
+    catch{showToast("Failed to reopen","error");}
+  }
+
+  const filtered=openings.filter(o=>statusFilter==="ALL"||o.status===statusFilter);
+  const openCount=openings.filter(o=>o.status==="OPEN").length;
+  const openTarget=openings.filter(o=>o.status==="OPEN").reduce((s,o)=>s+o.target_count,0);
+  const openFilled=openings.filter(o=>o.status==="OPEN").reduce((s,o)=>s+(filledCountByOpening[o.id]||0),0);
+
+  return(
+    <div>
+      <div className="page-header"><div><div className="page-title">Position Openings</div><div className="page-sub">Requisitions across all companies — separate from the hiring pipeline</div></div></div>
+      <div className="page-content">
+        <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+          <button className={`btn btn-sm ${tab==="openings"?"":"btn-ghost"}`} onClick={()=>setTab("openings")}>Openings</button>
+          <button className={`btn btn-sm ${tab==="companies"?"":"btn-ghost"}`} onClick={()=>setTab("companies")}>Companies</button>
+        </div>
+
+        {tab==="companies"?(
+          <SimpleRefList table="companies" title="Companies" placeholder="e.g. VCatch, Catch, Epoch Pride" showToast={showToast}/>
+        ):(
+          <>
+            <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))"}}>
+              <div className="kpi-card"><div className="kpi-label">Open Positions</div><div className="kpi-value blue">{openCount}</div><div className="kpi-sub">Requisitions</div></div>
+              <div className="kpi-card"><div className="kpi-label">Target Headcount</div><div className="kpi-value amber">{openTarget}</div><div className="kpi-sub">Across open positions</div></div>
+              <div className="kpi-card"><div className="kpi-label">Filled So Far</div><div className="kpi-value green">{openFilled}</div><div className="kpi-sub">{openTarget?Math.round((openFilled/openTarget)*100):0}% of target</div></div>
+            </div>
+
+            <div className="card" style={{marginBottom:16}}>
+              <div className="card-header"><div className="card-title">Open a New Position</div></div>
+              <div className="card-body">
+                <div className="two-col" style={{marginBottom:12}}>
+                  <div className="field"><label>Company *</label>
+                    <select value={form.company_id} onChange={e=>setForm({...form,company_id:e.target.value})}>
+                      <option value="">—</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="field"><label>Process *</label>
+                    <select value={form.process_id} onChange={e=>setForm({...form,process_id:e.target.value})}>
+                      <option value="">—</option>{processes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="two-col" style={{marginBottom:12}}>
+                  <div className="field"><label>Position Type *</label>
+                    <select value={form.position_type_id} onChange={e=>setForm({...form,position_type_id:e.target.value})}>
+                      <option value="">—</option>{positionTypes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="field"><label>Target Headcount *</label>
+                    <input type="number" min="1" value={form.target_count} onChange={e=>setForm({...form,target_count:e.target.value})}/>
+                  </div>
+                </div>
+                <div className="field" style={{marginBottom:12}}><label>Note (optional)</label><input value={form.note} onChange={e=>setForm({...form,note:e.target.value})} placeholder="e.g. Urgent — July batch"/></div>
+                <button className="btn btn-sm" onClick={createOpening} disabled={creating}>{creating?"Opening...":"Open Position"}</button>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title">Positions ({filtered.length})</div>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <select className="filter-select" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}>
+                    <option value="OPEN">Open</option>
+                    <option value="CLOSED">Closed</option>
+                    <option value="ALL">All</option>
+                  </select>
+                  <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
+                </div>
+              </div>
+              <div className="table-wrap">
+                {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-title">No positions here</div></div>:(
+                  <table>
+                    <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Status</th><th>Note</th><th>Actions</th></tr></thead>
+                    <tbody>{filtered.map(o=>{
+                      const filled=filledCountByOpening[o.id]||0;
+                      return(
+                        <tr key={o.id}>
+                          <td style={{fontWeight:500}}>{companyMap[o.company_id]||"—"}</td>
+                          <td>{processMap[o.process_id]||"—"}</td>
+                          <td>{positionMap[o.position_type_id]||"—"}</td>
+                          <td>{o.target_count}</td>
+                          <td style={{color:filled>=o.target_count?T.green:undefined,fontWeight:filled>=o.target_count?600:undefined}}>{filled}</td>
+                          <td><span className={`badge ${o.status==="OPEN"?"badge-green":"badge-gray"}`}>{o.status}</span></td>
+                          <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={o.note||""}>{o.note||"—"}</td>
+                          <td>
+                            {o.status==="OPEN"?
+                              <button className="btn btn-sm btn-ghost" onClick={()=>closeOpening(o.id)}>Close</button>:
+                              <button className="btn btn-sm btn-ghost" onClick={()=>reopenOpening(o.id)}>Reopen</button>
+                            }
+                          </td>
+                        </tr>
+                      );
+                    })}</tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HireFlowSettings({ showToast }) {
   const [tab,setTab]=useState("processes");
   const tabs=[["processes","Processes"],["positions","Position Types"],["sources","Lead Sources"],["reasons","Reasons"],["stages","Funnel Stages"],["dialing","Dialing Settings"],["queue","IVR Queue"]];
@@ -2145,11 +2318,26 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
   const newStageIsRejected=stageMap[newStage]?.name==="Rejected";
   const newStageIsNotInterested=stageMap[newStage]?.name==="Not Interested";
   const newStageIsInterview=stageMap[newStage]?.name==="Interview Scheduled";
+  const newStageIsHired=stageMap[newStage]?.name==="Hired";
   const newStageNeedsReason=newStageIsRejected||newStageIsNotInterested;
 
-  useEffect(()=>{loadActivity();},[]);
+  const [openOpenings,setOpenOpenings]=useState([]);
+  const [openingCompanies,setOpeningCompanies]=useState([]);
+  const [selectedOpeningId,setSelectedOpeningId]=useState("");
+
+  useEffect(()=>{
+    loadActivity();
+    dbSelect("position_openings","?select=*&status=eq.OPEN").then(setOpenOpenings).catch(()=>{});
+    dbSelect("companies","?select=id,name").then(setOpeningCompanies).catch(()=>{});
+  },[]);
   async function loadActivity(){
     try{setActivity(await dbSelect("candidate_activity",`?select=*&candidate_id=eq.${candidate.id}&order=changed_at.desc`));}catch{}
+  }
+  const openingCompanyMap=Object.fromEntries(openingCompanies.map(c=>[c.id,c.name]));
+  const openingProcessMap=Object.fromEntries(processes.map(p=>[p.id,p.name]));
+  const openingPositionMap=Object.fromEntries(positionTypes.map(p=>[p.id,p.name]));
+  function openingLabel(o){
+    return `${openingCompanyMap[o.company_id]||"—"} / ${openingProcessMap[o.process_id]||"—"} / ${openingPositionMap[o.position_type_id]||"—"}`;
   }
 
   async function saveDetails(){
@@ -2177,17 +2365,19 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
       const update={current_stage_id:newStage,updated_at:new Date().toISOString()};
       if(newStageNeedsReason)update.rejection_reason_id=rejectionReasonId;
       if(newStageIsInterview)update.interview_scheduled_at=new Date(interviewAt).toISOString();
+      if(newStageIsHired&&selectedOpeningId)update.filled_opening_id=selectedOpeningId;
       await dbUpdate("candidates",`id=eq.${candidate.id}`,update);
       const reasonLabel=newStageNeedsReason?rejectionReasons.find(r=>r.id===rejectionReasonId)?.name:null;
       const interviewLabel=newStageIsInterview?`Interview scheduled for ${new Date(interviewAt).toLocaleString("en-IN")}`:null;
-      const remarkParts=[reasonLabel||interviewLabel,stageRemark.trim()].filter(Boolean);
+      const openingLabelText=newStageIsHired&&selectedOpeningId?`Fills opening: ${openingLabel(openOpenings.find(o=>o.id===selectedOpeningId))}`:null;
+      const remarkParts=[reasonLabel||interviewLabel||openingLabelText,stageRemark.trim()].filter(Boolean);
       await dbInsert("candidate_activity",{
         candidate_id:candidate.id,type:"STAGE_CHANGE",is_contact_attempt:false,
         from_stage_id:candidate.current_stage_id,to_stage_id:newStage,
         remark:remarkParts.length?remarkParts.join(" — "):null,
         changed_by:myUserId,
       });
-      showToast("Stage updated","success");setStageRemark("");setRejectionReasonId("");setInterviewAt("");
+      showToast("Stage updated","success");setStageRemark("");setRejectionReasonId("");setInterviewAt("");setSelectedOpeningId("");
       onChanged();loadActivity();
     }catch{showToast("Failed to update stage","error");}
     finally{setBusy(false);}
@@ -2318,11 +2508,18 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
               <div className="field" style={{marginBottom:0}}><label>Interview Date & Time *</label>
                 <input type="datetime-local" value={interviewAt} onChange={e=>setInterviewAt(e.target.value)}/>
               </div>
+            ):newStageIsHired?(
+              <div className="field" style={{marginBottom:0}}><label>Fills Which Opening? (optional)</label>
+                <select value={selectedOpeningId} onChange={e=>setSelectedOpeningId(e.target.value)}>
+                  <option value="">— Not linked to an opening —</option>
+                  {openOpenings.map(o=><option key={o.id} value={o.id}>{openingLabel(o)}</option>)}
+                </select>
+              </div>
             ):(
               <div className="field" style={{marginBottom:0}}><label>Remark / Sub-disposition</label><input value={stageRemark} onChange={e=>setStageRemark(e.target.value)} placeholder="Why the stage is changing"/></div>
             )}
           </div>
-          {(newStageNeedsReason||newStageIsInterview)&&(
+          {(newStageNeedsReason||newStageIsInterview||newStageIsHired)&&(
             <div className="field" style={{marginBottom:8}}><label>Additional Note (optional)</label><input value={stageRemark} onChange={e=>setStageRemark(e.target.value)} placeholder="Any extra detail"/></div>
           )}
           <button className="btn btn-sm" onClick={changeStage} disabled={busy}>Update Stage</button>
@@ -3120,15 +3317,16 @@ function PasswordResetPage({ onDone }) {
 
 export default function App() {
   const [session,setSession]=useState(()=>{try{return JSON.parse(localStorage.getItem("sb_session"));}catch{return null;}});
+  const CEO_PAGES=["dashboard","openings"];
   const [page,setPage]=useState(()=>{
     const saved=localStorage.getItem("sb_page");
-    return getRole()==="CEO"?"dashboard":(saved||"dashboard");
+    return getRole()==="CEO"?(CEO_PAGES.includes(saved)?saved:"dashboard"):(saved||"dashboard");
   });
   const [toast,setToast]=useState(null);
   const [role,setRole]=useState(()=>getRole());
 
   useEffect(()=>{
-    if(role==="CEO"&&page!=="dashboard"){setPage("dashboard");localStorage.setItem("sb_page","dashboard");}
+    if(role==="CEO"&&!CEO_PAGES.includes(page)){setPage("dashboard");localStorage.setItem("sb_page","dashboard");}
   },[role]);
   const [isDark,setIsDark]=useState(()=>localStorage.getItem("theme")!=="light");
   const [isRecovery,setIsRecovery]=useState(()=>{
@@ -3192,6 +3390,7 @@ export default function App() {
     {id:"callerids",label:"IVR Caller IDs",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"audio",label:"IVR Audio Manager",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"logs",label:"IVR Call Logs",icon:"",roles:["ADMIN","MANAGER","HR"]},
+    {id:"openings",label:"Position Openings",icon:"",roles:["ADMIN","MANAGER","CEO"]},
     {id:"users",label:"Users",icon:"",roles:["ADMIN"]},
   ];
 
@@ -3250,6 +3449,7 @@ export default function App() {
           {page==="audio"&&["ADMIN","MANAGER"].includes(role)&&<AudioManager showToast={showToast}/>}
           {page==="logs"&&role!=="CEO"&&<CallLogs showToast={showToast}/>}
           {page==="users"&&role==="ADMIN"&&<UserManagement showToast={showToast}/>}
+          {page==="openings"&&["ADMIN","MANAGER","CEO"].includes(role)&&<PositionOpenings showToast={showToast}/>}
         </div>
       </div>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
