@@ -608,9 +608,8 @@ function Dashboard({ showToast, role }) {
             <div style={{fontSize:12,color:T.muted}}>{dateFrom||dateTo?"Filtered period":"All time"} calling activity</div>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-            <input type="date" className="filter-input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
-            <span style={{color:T.muted,fontSize:12}}>to</span>
-            <input type="date" className="filter-input" value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
+            <input type="date" className="filter-input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} title="From date"/>
+            <input type="date" className="filter-input" value={dateTo} onChange={e=>setDateTo(e.target.value)} title="To date"/>
             <select className="filter-select" value={campaignFilter} onChange={e=>setCampaignFilter(e.target.value)}>
               <option value="">All Campaigns</option>
               {campaignList.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
@@ -1632,7 +1631,7 @@ function UserManagement({ showToast }) {
     }catch(e){showToast(e.message||"Failed to delete user","error");}
   }
 
-  const roleColors={ADMIN:T.red,MANAGER:T.accent,HR:T.green};
+  const roleColors={ADMIN:T.red,MANAGER:T.accent,HR:T.green,CEO:T.purple};
 
   return(
     <div>
@@ -1652,6 +1651,7 @@ function UserManagement({ showToast }) {
                   <option value="HR">HR</option>
                   <option value="MANAGER">HR Manager</option>
                   <option value="ADMIN">Admin</option>
+                  <option value="CEO">CEO (reports only)</option>
                 </select>
               </div>
             </div>
@@ -1683,7 +1683,7 @@ function UserManagement({ showToast }) {
                     <td>
                       {u.email!==getEmail()?(
                         <select className="filter-select" value={u.role} onChange={e=>updateRole(u.id,e.target.value)} style={{padding:"4px 8px",fontSize:12}}>
-                          <option value="HR">HR</option><option value="MANAGER">Manager</option><option value="ADMIN">Admin</option>
+                          <option value="HR">HR</option><option value="MANAGER">Manager</option><option value="ADMIN">Admin</option><option value="CEO">CEO</option>
                         </select>
                       ):<span style={{fontSize:12,color:T.muted}}>You</span>}
                     </td>
@@ -2230,7 +2230,7 @@ function HireFlowCandidates({ showToast }) {
   const [bulkAssigning,setBulkAssigning]=useState(false);
   const fileRef=useRef();
 
-  const [pageTab,setPageTab]=useState("dashboard");
+  const [pageTab,setPageTab]=useState("pipeline");
   const [dashFrom,setDashFrom]=useState("");
   const [dashTo,setDashTo]=useState("");
   const [dashRecruiter,setDashRecruiter]=useState("");
@@ -2667,6 +2667,137 @@ function HireFlowCandidates({ showToast }) {
 }
 
 // ================================================
+// REPORTS (CEO)
+// ================================================
+function MiniBarChart({ data, valueKey, color, formatLabel }) {
+  const max = Math.max(1, ...data.map(d => d[valueKey]));
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 120, padding: "0 4px" }}>
+      {data.map((d, i) => (
+        <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }} title={`${formatLabel(d.key)}: ${d[valueKey]}`}>
+          <div style={{ fontSize: 10, color: T.muted }}>{d[valueKey] || ""}</div>
+          <div style={{ width: "100%", maxWidth: 24, height: 96, display: "flex", alignItems: "flex-end" }}>
+            <div style={{ width: "100%", height: `${Math.max(2, (d[valueKey] / max) * 96)}px`, background: color, borderRadius: "4px 4px 0 0" }} />
+          </div>
+          <div style={{ fontSize: 9, color: T.muted, whiteSpace: "nowrap" }}>{formatLabel(d.key)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Reports({ showToast }) {
+  const [view, setView] = useState("day");
+  const [callLogs, setCallLogs] = useState([]);
+  const [hireEvents, setHireEvents] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+      const [logs, stages] = await Promise.all([
+        dbSelect("call_logs", `?select=logged_at&logged_at=gte.${since}`),
+        dbSelect("funnel_stages", "?select=id,name"),
+      ]);
+      const hiredStage = stages.find(s => s.name === "Hired");
+      let hires = [];
+      if (hiredStage) {
+        hires = await dbSelect("candidate_activity", `?select=changed_at&type=eq.STAGE_CHANGE&to_stage_id=eq.${hiredStage.id}&changed_at=gte.${since}`);
+      }
+      setCallLogs(logs);
+      setHireEvents(hires);
+    } catch (e) { showToast("Failed to load reports", "error"); }
+    finally { setLoading(false); }
+  }
+
+  function dayKey(iso) { return new Date(iso).toISOString().split("T")[0]; }
+  function weekKey(iso) {
+    const d = new Date(iso);
+    const dow = (d.getUTCDay() + 6) % 7; // Monday = 0
+    const monday = new Date(d);
+    monday.setUTCDate(d.getUTCDate() - dow);
+    return monday.toISOString().split("T")[0];
+  }
+
+  const n = view === "day" ? 14 : 8;
+  const keyFn = view === "day" ? dayKey : weekKey;
+  const stepMs = view === "day" ? 86400000 : 7 * 86400000;
+
+  const buckets = (() => {
+    const keys = [];
+    const now = new Date();
+    for (let i = n - 1; i >= 0; i--) keys.push(keyFn(new Date(now.getTime() - i * stepMs).toISOString()));
+    const callMap = {}, hireMap = {};
+    callLogs.forEach(l => { const k = keyFn(l.logged_at); callMap[k] = (callMap[k] || 0) + 1; });
+    hireEvents.forEach(h => { const k = keyFn(h.changed_at); hireMap[k] = (hireMap[k] || 0) + 1; });
+    return keys.map(k => ({ key: k, calls: callMap[k] || 0, hires: hireMap[k] || 0 }));
+  })();
+
+  const totalCalls = buckets.reduce((s, b) => s + b.calls, 0);
+  const totalHires = buckets.reduce((s, b) => s + b.hires, 0);
+  const conversion = totalCalls ? Math.round((totalHires / totalCalls) * 1000) / 10 : 0;
+
+  function formatDayLabel(k) { return new Date(k + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
+  function formatWeekLabel(k) { return "Wk " + new Date(k + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
+  const formatLabel = view === "day" ? formatDayLabel : formatWeekLabel;
+
+  return (
+    <div>
+      <div className="page-header">
+        <div><div className="page-title">Reports</div><div className="page-sub">Company-wide productivity — calling &amp; hiring</div></div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className={`btn btn-sm ${view === "day" ? "" : "btn-ghost"}`} onClick={() => setView("day")}>Day-wise</button>
+          <button className={`btn btn-sm ${view === "week" ? "" : "btn-ghost"}`} onClick={() => setView("week")}>Week-wise</button>
+          <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
+        </div>
+      </div>
+      <div className="page-content">
+        {loading ? <div className="empty-state">Loading...</div> : (
+          <>
+            <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))" }}>
+              <div className="kpi-card"><div className="kpi-label">Total Calls</div><div className="kpi-value blue">{totalCalls}</div><div className="kpi-sub">Last {view === "day" ? "14 days" : "8 weeks"}</div></div>
+              <div className="kpi-card"><div className="kpi-label">Total Hired</div><div className="kpi-value green">{totalHires}</div><div className="kpi-sub">Last {view === "day" ? "14 days" : "8 weeks"}</div></div>
+              <div className="kpi-card"><div className="kpi-label">Calls → Hire Rate</div><div className="kpi-value amber">{conversion}%</div><div className="kpi-sub">Hires / total calls</div></div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 16, marginBottom: 4 }}>
+              <div className="card">
+                <div className="card-header"><div className="card-title">Calling Trend</div></div>
+                <div className="card-body"><MiniBarChart data={buckets} valueKey="calls" color={T.accent} formatLabel={formatLabel} /></div>
+              </div>
+              <div className="card">
+                <div className="card-header"><div className="card-title">Hiring Trend</div></div>
+                <div className="card-body"><MiniBarChart data={buckets} valueKey="hires" color={T.green} formatLabel={formatLabel} /></div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header"><div className="card-title">{view === "day" ? "Day-wise" : "Week-wise"} Breakdown</div></div>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>{view === "day" ? "Date" : "Week Of"}</th><th>Calls</th><th>Hired</th><th>Conversion</th></tr></thead>
+                  <tbody>{[...buckets].reverse().map(b => (
+                    <tr key={b.key}>
+                      <td>{formatLabel(b.key)}</td>
+                      <td>{b.calls}</td>
+                      <td style={{ color: b.hires ? T.green : undefined, fontWeight: b.hires ? 600 : undefined }}>{b.hires}</td>
+                      <td>{b.calls ? Math.round((b.hires / b.calls) * 1000) / 10 : 0}%</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ================================================
 // MAIN APP
 // ================================================
 // ================================================
@@ -2796,9 +2927,16 @@ function PasswordResetPage({ onDone }) {
 
 export default function App() {
   const [session,setSession]=useState(()=>{try{return JSON.parse(localStorage.getItem("sb_session"));}catch{return null;}});
-  const [page,setPage]=useState(()=>localStorage.getItem("sb_page")||"dashboard");
+  const [page,setPage]=useState(()=>{
+    const saved=localStorage.getItem("sb_page");
+    return getRole()==="CEO"?"reports":(saved||"dashboard");
+  });
   const [toast,setToast]=useState(null);
   const [role,setRole]=useState(()=>getRole());
+
+  useEffect(()=>{
+    if(role==="CEO"&&page!=="reports"){setPage("reports");localStorage.setItem("sb_page","reports");}
+  },[role]);
   const [isDark,setIsDark]=useState(()=>localStorage.getItem("theme")!=="light");
   const [isRecovery,setIsRecovery]=useState(()=>{
     const hash = window.location.hash;
@@ -2862,11 +3000,12 @@ export default function App() {
     {id:"audio",label:"IVR Audio Manager",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"logs",label:"IVR Call Logs",icon:"",roles:["ADMIN","MANAGER","HR"]},
     {id:"users",label:"Users",icon:"",roles:["ADMIN"]},
+    {id:"reports",label:"Reports",icon:"",roles:["ADMIN","CEO"]},
   ];
 
   const nav=allNav.filter(n=>n.roles.includes(role));
-  const roleColor={ADMIN:"#EF4444",MANAGER:"#3B7AF8",HR:"#10B981"};
-  const roleLabel={ADMIN:"Admin",MANAGER:"HR Manager",HR:"HR"};
+  const roleColor={ADMIN:"#EF4444",MANAGER:"#3B7AF8",HR:"#10B981",CEO:"#7238C9"};
+  const roleLabel={ADMIN:"Admin",MANAGER:"HR Manager",HR:"HR",CEO:"CEO"};
   const T_cur = isDark ? DARK : LIGHT;
 
   return(
@@ -2908,17 +3047,18 @@ export default function App() {
 
         {/* MAIN CONTENT */}
         <div className="main">
-          {page==="dashboard"&&<Dashboard showToast={showToast} role={role}/>}
+          {page==="dashboard"&&role!=="CEO"&&<Dashboard showToast={showToast} role={role}/>}
           {page==="campaigns"&&["ADMIN","MANAGER"].includes(role)&&<Campaigns showToast={showToast}/>}
-          {page==="leads"&&<Leads showToast={showToast}/>}
-          {page==="interested"&&<InterestedCandidates showToast={showToast}/>}
-          {page==="hireflow"&&<HireFlowCandidates showToast={showToast}/>}
+          {page==="leads"&&role!=="CEO"&&<Leads showToast={showToast}/>}
+          {page==="interested"&&role!=="CEO"&&<InterestedCandidates showToast={showToast}/>}
+          {page==="hireflow"&&role!=="CEO"&&<HireFlowCandidates showToast={showToast}/>}
           {page==="hireflow-settings"&&["ADMIN","MANAGER"].includes(role)&&<HireFlowSettings showToast={showToast}/>}
           {page==="dnd"&&["ADMIN","MANAGER"].includes(role)&&<DndList showToast={showToast}/>}
           {page==="callerids"&&["ADMIN","MANAGER"].includes(role)&&<CallerIds showToast={showToast}/>}
           {page==="audio"&&["ADMIN","MANAGER"].includes(role)&&<AudioManager showToast={showToast}/>}
-          {page==="logs"&&<CallLogs showToast={showToast}/>}
+          {page==="logs"&&role!=="CEO"&&<CallLogs showToast={showToast}/>}
           {page==="users"&&role==="ADMIN"&&<UserManagement showToast={showToast}/>}
+          {page==="reports"&&["ADMIN","CEO"].includes(role)&&<Reports showToast={showToast}/>}
         </div>
       </div>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
