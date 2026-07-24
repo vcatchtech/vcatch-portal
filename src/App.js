@@ -464,6 +464,7 @@ function Dashboard({ showToast, role }) {
   const [hfAttemptEvents,setHfAttemptEvents]=useState([]);
   const [hfHireEvents,setHfHireEvents]=useState([]);
   const [hfRecruiterStats,setHfRecruiterStats]=useState([]);
+  const [hfStageBreakdown,setHfStageBreakdown]=useState([]);
 
   const hfMyUserId=hfUsers.find(u=>u.email===getEmail())?.id;
   const hfReporteeIds=hfUsers.filter(u=>u.manager_id===hfMyUserId).map(u=>u.id);
@@ -494,7 +495,7 @@ function Dashboard({ showToast, role }) {
     try{
       const [cands,stages,activity]=await Promise.all([
         dbSelect("candidates","?select=id,current_stage_id,assigned_to,assigned_at"),
-        dbSelect("funnel_stages","?select=id,name"),
+        dbSelect("funnel_stages","?select=id,name,sort_order,is_exit_stage&order=sort_order"),
         dbSelect("candidate_activity","?select=candidate_id,type,to_stage_id,changed_at&type=in.(CALL_ATTEMPT,STAGE_CHANGE)"),
       ]);
       const stageName=Object.fromEntries(stages.map(s=>[s.id,s.name]));
@@ -522,6 +523,10 @@ function Dashboard({ showToast, role }) {
       const rejected=scoped.filter(c=>stageName[c.current_stage_id]==="Rejected").length;
       const notInterested=scoped.filter(c=>stageName[c.current_stage_id]==="Not Interested").length;
       const inPipeline=total-hiredCurrent-rejected-notInterested;
+
+      setHfStageBreakdown(stages.map(s=>({
+        key:s.name,count:scoped.filter(c=>c.current_stage_id===s.id).length,color:s.is_exit_stage?T.purple:T.accent,
+      })));
 
       const inRange=iso=>{
         if(!hfDateFrom&&!hfDateTo)return true;
@@ -608,7 +613,7 @@ function Dashboard({ showToast, role }) {
     let from=hfDateFrom,to=hfDateTo;
     if(!from||!to){
       const t=new Date();to=t.toISOString().split("T")[0];
-      const f=new Date();f.setDate(t.getDate()-(hfView==="day"?13:55));from=f.toISOString().split("T")[0];
+      const f=new Date();f.setDate(t.getDate()-(hfView==="day"?6:55));from=f.toISOString().split("T")[0];
     }
     const keys=[];
     if(hfView==="day"){
@@ -621,7 +626,8 @@ function Dashboard({ showToast, role }) {
     const attemptMap={},hireMap={};
     hfAttemptEvents.forEach(a=>{const k=hfKeyFn(a.changed_at);attemptMap[k]=(attemptMap[k]||0)+1;});
     hfHireEvents.forEach(h=>{const k=hfKeyFn(h.changed_at);hireMap[k]=(hireMap[k]||0)+1;});
-    return keys.map(k=>({key:k,attempted:attemptMap[k]||0,hires:hireMap[k]||0}));
+    const capped=hfView==="day"?keys.slice(-7):keys;
+    return capped.map(k=>({key:k,attempted:attemptMap[k]||0,hires:hireMap[k]||0}));
   })();
   function hfFormatLabel(k){
     return hfView==="day"
@@ -634,7 +640,7 @@ function Dashboard({ showToast, role }) {
     let from=dateFrom,to=dateTo;
     if(!from||!to){
       const t=new Date();to=t.toISOString().split("T")[0];
-      const f=new Date();f.setDate(t.getDate()-(ivrView==="day"?13:55));from=f.toISOString().split("T")[0];
+      const f=new Date();f.setDate(t.getDate()-(ivrView==="day"?6:55));from=f.toISOString().split("T")[0];
     }
     const keys=[];
     if(ivrView==="day"){
@@ -646,7 +652,8 @@ function Dashboard({ showToast, role }) {
     }
     const callMap={},interestedMap={};
     callLogsRaw.forEach(l=>{const k=ivrKeyFn(l.logged_at);callMap[k]=(callMap[k]||0)+1;if(l.sub_disposition==="INTERESTED")interestedMap[k]=(interestedMap[k]||0)+1;});
-    return keys.map(k=>({key:k,calls:callMap[k]||0,interested:interestedMap[k]||0}));
+    const capped=ivrView==="day"?keys.slice(-7):keys;
+    return capped.map(k=>({key:k,calls:callMap[k]||0,interested:interestedMap[k]||0}));
   })();
   function ivrFormatLabel(k){
     return ivrView==="day"
@@ -817,23 +824,22 @@ function Dashboard({ showToast, role }) {
             ["Failed",stats.byDisp?.FAILED||0,T.muted],
             ["Other",Math.max(0,stats.total-["INTERESTED","NOT_INTERESTED","NO_RESPONSE","INVALID_INPUT","CALL_DISCONNECTED","BUSY","FAILED"].reduce((s,k)=>s+(stats.byDisp?.[k]||0),0)),T.muted],
           ].filter(([label,count])=>label!=="Other"||count>0);
-          const max=Math.max(1,...rows.map(r=>r[1]));
           return(
             <div className="card" style={{marginBottom:20}}>
               <div className="card-header">
                 <div className="card-title">Disposition Breakdown</div>
                 <span style={{fontSize:12,color:T.muted}}>{stats.total} total calls</span>
               </div>
-              <div style={{padding:"8px 20px 20px"}}>
-                {rows.map(([label,count,color])=>(
-                  <div key={label} style={{display:"flex",alignItems:"center",gap:12,padding:"7px 0"}} title={`${label}: ${count}`}>
-                    <div style={{width:110,fontSize:12,color:T.muted,flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</div>
-                    <div style={{flex:1,background:T.border,borderRadius:4,height:10,position:"relative"}}>
-                      <div style={{width:`${(count/max)*100}%`,minWidth:count?4:0,height:10,borderRadius:4,background:color,transition:"width 0.3s ease"}}/>
+              <div className="card-body" style={{padding:"12px 20px"}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+                  {rows.map(([label,count,color])=>(
+                    <div key={label} style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                      <div style={{fontSize:11,color:T.muted,marginBottom:4}}>{label}</div>
+                      <div style={{fontSize:20,fontWeight:700,color}}>{count}</div>
+                      <div style={{fontSize:11,color:T.muted}}>{stats.total?Math.round((count/stats.total)*100):0}%</div>
                     </div>
-                    <div style={{width:60,fontSize:12,color:T.muted,textAlign:"right",flexShrink:0}}>{count} ({stats.total?Math.round((count/stats.total)*100):0}%)</div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
           );
@@ -1658,8 +1664,16 @@ function CallLogs({ showToast }) {
     try{
       const data=await dbSelect("call_logs","?select=*&order=logged_at.desc&limit=2000");
       setLogs(data);setCampaigns([...new Set(data.map(l=>l.campaign).filter(Boolean))]);
+      if(data.length>=2000)showToast("Showing the most recent 2000 records — narrow the date range for a complete export","warn");
     }catch{showToast("Failed","error");}
     finally{setLoading(false);}
+  }
+
+  function quickRange(days){
+    const to=new Date();
+    const from=new Date();from.setDate(to.getDate()-(days-1));
+    setFd(from.toISOString().split("T")[0]);
+    setTd(to.toISOString().split("T")[0]);
   }
 
   const filtered=logs.filter(l=>{
@@ -1689,7 +1703,7 @@ function CallLogs({ showToast }) {
             <option value="50">50 rows</option><option value="100">100 rows</option>
             <option value="500">500 rows</option><option value="ALL">All rows</option>
           </select>
-          <button className="btn btn-sm btn-ghost" onClick={doExport}>Export</button>
+          <button className="btn btn-sm btn-ghost" onClick={doExport}>Download CSV</button>
         </div>
       </div>
       <div className="page-content">
@@ -1713,10 +1727,11 @@ function CallLogs({ showToast }) {
             <option value="ALL">All Dispositions</option>
             {dispositions.map(d=><option key={d} value={d}>{d.replace(/_/g," ")}</option>)}
           </select>
-          <input type="date" className="filter-input" value={fd} onChange={e=>setFd(e.target.value)}/>
-          <span style={{color:T.muted,fontSize:12}}>to</span>
-          <input type="date" className="filter-input" value={td} onChange={e=>setTd(e.target.value)}/>
-          {(fd||td)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setFd("");setTd("");}}>✕</button>}
+          <input type="date" className="filter-input" value={fd} onChange={e=>setFd(e.target.value)} title="From date"/>
+          <input type="date" className="filter-input" value={td} onChange={e=>setTd(e.target.value)} title="To date"/>
+          <button className="btn btn-sm btn-ghost" onClick={()=>quickRange(7)}>7 Days</button>
+          <button className="btn btn-sm btn-ghost" onClick={()=>quickRange(30)}>30 Days</button>
+          {(fd||td)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setFd("");setTd("");}}>✕ Clear</button>}
           <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
         </div>
         <div className="card">
@@ -2721,8 +2736,7 @@ function HireFlowCandidates({ showToast }) {
   const [search,setSearch]=useState("");
   const [stageFilter,setStageFilter]=useState("ALL");
   const [processFilter,setProcessFilter]=useState("ALL");
-  const [scopeFilter,setScopeFilter]=useState(getRole()==="HR"?"MINE":"ALL");
-  const [assigneeFilter,setAssigneeFilter]=useState("");
+  const [assigneeFilter,setAssigneeFilter]=useState(getRole()==="HR"?"MINE":"");
   const [colWidths,setColWidths]=useState({});
   const [filterFrom,setFilterFrom]=useState("");
   const [filterTo,setFilterTo]=useState("");
@@ -2751,7 +2765,7 @@ function HireFlowCandidates({ showToast }) {
   useEffect(()=>{loadAll();},[]);
   // Manager/Admin land on the overall view here (not a self-scoped default)
   // — they're meant to oversee everyone, matching the main Dashboard.
-  useEffect(()=>{setPage(1);},[search,stageFilter,processFilter,scopeFilter,assigneeFilter,filterFrom,filterTo]);
+  useEffect(()=>{setPage(1);},[search,stageFilter,processFilter,assigneeFilter,filterFrom,filterTo]);
 
   async function loadAll(){
     setLoading(true);
@@ -2816,9 +2830,9 @@ function HireFlowCandidates({ showToast }) {
     }
     if(stageFilter!=="ALL"&&c.current_stage_id!==stageFilter)return false;
     if(processFilter!=="ALL"&&c.process_id!==processFilter)return false;
-    if(scopeFilter==="MINE"&&c.assigned_to!==myUserId)return false;
-    if(scopeFilter==="TEAM"&&!reporteeIds.includes(c.assigned_to)&&c.assigned_to!==myUserId)return false;
-    if(assigneeFilter&&c.assigned_to!==assigneeFilter)return false;
+    if(assigneeFilter==="MINE"&&c.assigned_to!==myUserId)return false;
+    if(assigneeFilter==="TEAM"&&!reporteeIds.includes(c.assigned_to)&&c.assigned_to!==myUserId)return false;
+    if(assigneeFilter&&!["MINE","TEAM"].includes(assigneeFilter)&&c.assigned_to!==assigneeFilter)return false;
     if((filterFrom||filterTo)&&c.assigned_at){
       const d=new Date(c.assigned_at).toISOString().split("T")[0];
       if(filterFrom&&d<filterFrom)return false;
@@ -3094,15 +3108,10 @@ function HireFlowCandidates({ showToast }) {
             {processes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           {["ADMIN","MANAGER"].includes(role)&&(
-            <select className="filter-select" value={scopeFilter} onChange={e=>setScopeFilter(e.target.value)}>
-              <option value="ALL">Everyone</option>
+            <select className="filter-select" value={assigneeFilter} onChange={e=>setAssigneeFilter(e.target.value)}>
+              <option value="">Everyone</option>
               <option value="MINE">Assigned to Me</option>
               {role==="MANAGER"&&<option value="TEAM">My Team</option>}
-            </select>
-          )}
-          {["ADMIN","MANAGER"].includes(role)&&(
-            <select className="filter-select" value={assigneeFilter} onChange={e=>setAssigneeFilter(e.target.value)}>
-              <option value="">Any Recruiter</option>
               {assignableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
             </select>
           )}
@@ -3112,12 +3121,12 @@ function HireFlowCandidates({ showToast }) {
         </div>
 
         {["ADMIN","MANAGER"].includes(role)&&selectedIds.length>0&&(
-          <div className="card" style={{display:"flex",gap:8,alignItems:"center",padding:12,marginBottom:16}}>
-            <div style={{fontSize:13,fontWeight:500}}>{selectedIds.length} selected</div>
+          <div className="card" style={{display:"flex",gap:8,alignItems:"center",padding:12,marginBottom:16,border:`1.5px solid ${T.accent}`}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.accent}}>{selectedIds.length} selected — Bulk Reassign</div>
             <select className="filter-select" value={bulkAssignTo} onChange={e=>setBulkAssignTo(e.target.value)}>
-              <option value="">Assign to…</option>{assignableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+              <option value="">Reassign to…</option>{assignableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
             </select>
-            <button className="btn btn-sm" onClick={bulkAssign} disabled={bulkAssigning||!bulkAssignTo}>{bulkAssigning?"Assigning...":"Assign"}</button>
+            <button className="btn btn-sm" onClick={bulkAssign} disabled={bulkAssigning||!bulkAssignTo}>{bulkAssigning?"Reassigning...":"Reassign"}</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>setSelectedIds([])}>Clear</button>
           </div>
         )}
@@ -3267,7 +3276,7 @@ function ResizableTh({ col, widths, setWidths, defaultWidth, children, style }) 
   );
 }
 
-function MiniBarChart({ data, valueKey, color, formatLabel }) {
+function MiniBarChart({ data, valueKey, color, colorOf, formatLabel }) {
   const max = Math.max(1, ...data.map(d => d[valueKey]));
   return (
     <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 120, padding: "0 4px" }}>
@@ -3275,9 +3284,9 @@ function MiniBarChart({ data, valueKey, color, formatLabel }) {
         <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }} title={`${formatLabel(d.key)}: ${d[valueKey]}`}>
           <div style={{ fontSize: 10, color: T.muted }}>{d[valueKey] || ""}</div>
           <div style={{ width: "100%", maxWidth: 24, height: 96, display: "flex", alignItems: "flex-end" }}>
-            <div style={{ width: "100%", height: `${Math.max(2, (d[valueKey] / max) * 96)}px`, background: color, borderRadius: "4px 4px 0 0" }} />
+            <div style={{ width: "100%", height: `${Math.max(2, (d[valueKey] / max) * 96)}px`, background: colorOf?colorOf(d):color, borderRadius: "4px 4px 0 0" }} />
           </div>
-          <div style={{ fontSize: 9, color: T.muted, whiteSpace: "nowrap" }}>{formatLabel(d.key)}</div>
+          <div style={{ fontSize: 9, color: T.muted, whiteSpace: "nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"100%" }}>{formatLabel(d.key)}</div>
         </div>
       ))}
     </div>
