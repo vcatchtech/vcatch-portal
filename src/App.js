@@ -445,36 +445,58 @@ function Dashboard({ showToast, role }) {
   const [dialerStatus,setDialerStatus]=useState(null);
   const [testPhone,setTestPhone]=useState("");
   const [testLoading,setTestLoading]=useState(false);
-  const [dateFrom,setDateFrom]=useState(()=>loadFilter("dash_from",today()));
-  const [dateTo,setDateTo]=useState(()=>loadFilter("dash_to",today()));
+  const [dateFrom,setDateFrom]=useState(today());
+  const [dateTo,setDateTo]=useState(today());
   const [campaignFilter,setCampaignFilter]=useState("");
   const [campaignList,setCampaignList]=useState([]);
   const [hfSummary,setHfSummary]=useState(null);
+  const [hfUsers,setHfUsers]=useState([]);
+  const [hfDateFrom,setHfDateFrom]=useState(today());
+  const [hfDateTo,setHfDateTo]=useState(today());
+  const [hfAssignedTo,setHfAssignedTo]=useState("");
+  const [hfAssignedInit,setHfAssignedInit]=useState(false);
+
+  const hfMyUserId=hfUsers.find(u=>u.email===getEmail())?.id;
+  const hfReporteeIds=hfUsers.filter(u=>u.manager_id===hfMyUserId).map(u=>u.id);
+  const hfAssigneeOptions=role==="ADMIN"?hfUsers:role==="MANAGER"?hfUsers.filter(u=>hfReporteeIds.includes(u.id)||u.id===hfMyUserId):[];
 
   useEffect(()=>{
     loadAll();
     dbSelect("campaigns","?select=name&order=created_at.desc").then(setCampaignList).catch(()=>{});
+    dbSelect("user_roles","?select=id,name,email,role,manager_id").then(setHfUsers).catch(()=>{});
     // Dialer status every 5s
     const dialerInterval=setInterval(loadDialerStatus,5000);
     // Full dashboard auto-refresh every 30s
     const refreshInterval=setInterval(loadStats,30000);
     return()=>{clearInterval(dialerInterval);clearInterval(refreshInterval);};
   },[]);
-  useEffect(()=>{saveFilter("dash_from",dateFrom);saveFilter("dash_to",dateTo);loadStats();},[dateFrom,dateTo,campaignFilter]);
+  useEffect(()=>{loadStats();},[dateFrom,dateTo,campaignFilter]);
+  useEffect(()=>{loadHireFlowSummary();},[hfDateFrom,hfDateTo,hfAssignedTo,hfMyUserId]);
+  useEffect(()=>{
+    if(!hfAssignedInit&&hfMyUserId){setHfAssignedTo(hfMyUserId);setHfAssignedInit(true);}
+  },[hfMyUserId,hfAssignedInit]);
 
   async function loadAll(){await Promise.all([loadStats(),loadDialerStatus(),loadHireFlowSummary()]);}
 
   async function loadHireFlowSummary(){
     try{
       const [cands,stages]=await Promise.all([
-        dbSelect("candidates","?select=current_stage_id"),
+        dbSelect("candidates","?select=current_stage_id,assigned_to,assigned_at"),
         dbSelect("funnel_stages","?select=id,name"),
       ]);
       const stageName=Object.fromEntries(stages.map(s=>[s.id,s.name]));
-      const total=cands.length;
-      const hired=cands.filter(c=>stageName[c.current_stage_id]==="Hired").length;
-      const rejected=cands.filter(c=>stageName[c.current_stage_id]==="Rejected").length;
-      const notInterested=cands.filter(c=>stageName[c.current_stage_id]==="Not Interested").length;
+      const scoped=cands.filter(c=>{
+        if(role==="HR"&&c.assigned_to!==hfMyUserId)return false;
+        if(role==="MANAGER"&&!(hfReporteeIds.includes(c.assigned_to)||c.assigned_to===hfMyUserId))return false;
+        if(hfAssignedTo&&c.assigned_to!==hfAssignedTo)return false;
+        if(!c.assigned_at)return false;
+        const d=new Date(c.assigned_at).toISOString().split("T")[0];
+        return d>=hfDateFrom&&d<=hfDateTo;
+      });
+      const total=scoped.length;
+      const hired=scoped.filter(c=>stageName[c.current_stage_id]==="Hired").length;
+      const rejected=scoped.filter(c=>stageName[c.current_stage_id]==="Rejected").length;
+      const notInterested=scoped.filter(c=>stageName[c.current_stage_id]==="Not Interested").length;
       const inPipeline=total-hired-rejected-notInterested;
       setHfSummary({total,hired,rejected,notInterested,inPipeline,conversion:total?Math.round((hired/total)*100):0});
     }catch(e){}
@@ -532,6 +554,54 @@ function Dashboard({ showToast, role }) {
         </div>
       </div>
       <div className="page-content">
+        {/* HireFlow Overview */}
+        {hfSummary&&(
+          <div className="card">
+            <div className="card-header" style={{flexWrap:"wrap",gap:8}}>
+              <div className="card-title">Hire Flow</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                <input type="date" className="filter-input" value={hfDateFrom} onChange={e=>setHfDateFrom(e.target.value)} title="From date"/>
+                <input type="date" className="filter-input" value={hfDateTo} onChange={e=>setHfDateTo(e.target.value)} title="To date"/>
+                {hfAssigneeOptions.length>0&&(
+                  <select className="filter-select" value={hfAssignedTo} onChange={e=>setHfAssignedTo(e.target.value)}>
+                    <option value="">{role==="ADMIN"?"Everyone":"My Team"}</option>
+                    {hfAssigneeOptions.map(u=><option key={u.id} value={u.id}>{u.id===hfMyUserId?"Me":(u.name||u.email)}</option>)}
+                  </select>
+                )}
+                <button className="btn btn-sm btn-ghost" onClick={()=>{setHfDateFrom(today());setHfDateTo(today());if(hfMyUserId)setHfAssignedTo(hfMyUserId);}}>Reset</button>
+              </div>
+            </div>
+            <div className="card-body" style={{padding:"12px 20px"}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10}}>
+                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Total Candidates</div>
+                  <div style={{fontSize:20,fontWeight:700,color:T.accent}}>{hfSummary.total}</div>
+                </div>
+                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>In Pipeline</div>
+                  <div style={{fontSize:20,fontWeight:700}}>{hfSummary.inPipeline}</div>
+                </div>
+                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Hired</div>
+                  <div style={{fontSize:20,fontWeight:700,color:T.green}}>{hfSummary.hired}</div>
+                </div>
+                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Rejected</div>
+                  <div style={{fontSize:20,fontWeight:700,color:T.red}}>{hfSummary.rejected}</div>
+                </div>
+                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Not Interested</div>
+                  <div style={{fontSize:20,fontWeight:700,color:T.amber}}>{hfSummary.notInterested}</div>
+                </div>
+                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Conversion</div>
+                  <div style={{fontSize:20,fontWeight:700,color:T.accent}}>{hfSummary.conversion}%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Dialer Status Bar */}
         <div className="dialer-bar">
           <span className={`live-dot ${isActive?"":"off"}`}></span>
@@ -586,43 +656,6 @@ function Dashboard({ showToast, role }) {
           </div>
         )}
 
-        {/* HireFlow Overview */}
-        {hfSummary&&(
-          <div className="card">
-            <div className="card-header">
-              <div className="card-title">Hiring Overview</div>
-              <span style={{fontSize:12,color:T.muted}}>All time — HireFlow</span>
-            </div>
-            <div className="card-body" style={{padding:"12px 20px"}}>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10}}>
-                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Total Candidates</div>
-                  <div style={{fontSize:20,fontWeight:700,color:T.accent}}>{hfSummary.total}</div>
-                </div>
-                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>In Pipeline</div>
-                  <div style={{fontSize:20,fontWeight:700}}>{hfSummary.inPipeline}</div>
-                </div>
-                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Hired</div>
-                  <div style={{fontSize:20,fontWeight:700,color:T.green}}>{hfSummary.hired}</div>
-                </div>
-                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Rejected</div>
-                  <div style={{fontSize:20,fontWeight:700,color:T.red}}>{hfSummary.rejected}</div>
-                </div>
-                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Not Interested</div>
-                  <div style={{fontSize:20,fontWeight:700,color:T.amber}}>{hfSummary.notInterested}</div>
-                </div>
-                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Conversion</div>
-                  <div style={{fontSize:20,fontWeight:700,color:T.accent}}>{hfSummary.conversion}%</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -676,7 +709,10 @@ function Campaigns({ showToast }) {
     finally{setActionLoading(null);}
   }
 
-  const hasRunning=campaigns.some(c=>c.status==="RUNNING");
+  const SYSTEM_CAMPAIGNS=["Recruiter Follow-ups"];
+  const systemCampaigns=campaigns.filter(c=>SYSTEM_CAMPAIGNS.includes(c.name));
+  const manualCampaigns=campaigns.filter(c=>!SYSTEM_CAMPAIGNS.includes(c.name));
+  const hasRunning=manualCampaigns.some(c=>c.status==="RUNNING");
 
   return(
     <div>
@@ -685,15 +721,50 @@ function Campaigns({ showToast }) {
         <button className="btn btn-sm" onClick={()=>setShowCreate(true)}>+ New Campaign</button>
       </div>
       <div className="page-content">
+        {systemCampaigns.length>0&&(
+          <div className="card" style={{marginBottom:16,borderStyle:"dashed"}}>
+            <div className="card-header">
+              <div className="card-title">Automated — HireFlow</div>
+              <span style={{fontSize:12,color:T.muted}}>Runs on its own, nothing to start or pause here</span>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Campaign</th><th>Status</th><th>Progress</th><th>Settings</th></tr></thead>
+                <tbody>{systemCampaigns.map(c=>{
+                  const total=c.total_leads||0;const called=c.called_count||0;
+                  const pct=total?Math.round((called/total)*100):0;
+                  return(
+                    <tr key={c.id}>
+                      <td>
+                        <div style={{fontWeight:600,color:T.text}}>{c.name}</div>
+                        {c.description&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{c.description}</div>}
+                      </td>
+                      <td><DisposBadge sub={c.status}/></td>
+                      <td style={{minWidth:160}}>
+                        <div style={{fontSize:12,color:T.muted,marginBottom:6}}>{called} / {total} called ({pct}%)</div>
+                        <div className="progress-bar"><div className="progress-fill" style={{width:`${pct}%`}}/></div>
+                        <div style={{fontSize:11,color:T.muted,marginTop:4}}>Pending: {c.pending_count||0}</div>
+                      </td>
+                      <td style={{fontSize:12}}>
+                        <div>Retries: <strong>{c.max_retries}x</strong></div>
+                        <div style={{color:T.muted}}>Gap: {c.retry_after_minutes} min</div>
+                      </td>
+                    </tr>
+                  );
+                })}</tbody>
+              </table>
+            </div>
+          </div>
+        )}
         {hasRunning&&<div className="info-box green" style={{marginBottom:16,display:"flex",alignItems:"center",gap:8}}><span className="live-dot"></span>A campaign is running. Pause it before starting another.</div>}
         <div className="card">
           <div className="table-wrap">
-            {campaigns.length===0?(
+            {manualCampaigns.length===0?(
               <div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No campaigns yet</div><div className="empty-sub">Create a campaign, upload leads, then start dialing</div></div>
             ):(
               <table>
                 <thead><tr><th>Campaign</th><th>Status</th><th>Progress</th><th>Settings</th><th>Actions</th></tr></thead>
-                <tbody>{campaigns.map(c=>{
+                <tbody>{manualCampaigns.map(c=>{
                   const total=c.total_leads||0;const called=c.called_count||0;
                   const pct=total?Math.round((called/total)*100):0;
                   const isRunning=c.status==="RUNNING";
@@ -1052,8 +1123,8 @@ function InterestedCandidates({ showToast }) {
   const [saving,setSaving]=useState(false);
   const [filterCampaign,setFilterCampaign]=useState(()=>loadFilter("cand_campaign","ALL"));
   const [filterStatus,setFilterStatus]=useState(()=>loadFilter("cand_status","PENDING"));
-  const [filterFrom,setFilterFrom]=useState(()=>loadFilter("cand_from",""));
-  const [filterTo,setFilterTo]=useState(()=>loadFilter("cand_to",""));
+  const [filterFrom,setFilterFrom]=useState(today());
+  const [filterTo,setFilterTo]=useState(today());
   const [campaigns,setCampaigns]=useState([]);
 
   useEffect(()=>{load();},[]);
@@ -1154,10 +1225,10 @@ function InterestedCandidates({ showToast }) {
             <option value="REJECTED">Rejected</option>
             <option value="HIRED">Hired</option>
           </select>
-          <input type="date" className="filter-input" value={filterFrom} onChange={e=>{setFilterFrom(e.target.value);saveFilter("cand_from",e.target.value);}} title="From date"/>
+          <input type="date" className="filter-input" value={filterFrom} onChange={e=>setFilterFrom(e.target.value)} title="From date"/>
           <span style={{color:T.muted,fontSize:12}}>to</span>
-          <input type="date" className="filter-input" value={filterTo} onChange={e=>{setFilterTo(e.target.value);saveFilter("cand_to",e.target.value);}} title="To date"/>
-          {(filterFrom||filterTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setFilterFrom("");setFilterTo("");saveFilter("cand_from","");saveFilter("cand_to","");}}>Clear</button>}
+          <input type="date" className="filter-input" value={filterTo} onChange={e=>setFilterTo(e.target.value)} title="To date"/>
+          {(filterFrom||filterTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setFilterFrom("");setFilterTo("");}}>Clear</button>}
           <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
         </div>
         <div className="card">
@@ -1390,8 +1461,8 @@ function AudioManager({ showToast }) {
 // ================================================
 function CallLogs({ showToast }) {
   const [logs,setLogs]=useState([]);const [loading,setLoading]=useState(false);
-  const [fd,setFd]=useState(()=>loadFilter("logs_from",today()));
-  const [td,setTd]=useState(()=>loadFilter("logs_to",today()));
+  const [fd,setFd]=useState(today());
+  const [td,setTd]=useState(today());
   const [fc,setFc]=useState(()=>loadFilter("logs_campaign","ALL"));
   const [fds,setFds]=useState(()=>loadFilter("logs_disp","ALL"));
   const [limit,setLimit]=useState(()=>loadFilter("logs_limit","ALL"));
@@ -1846,7 +1917,7 @@ function HireFlowSettings({ showToast }) {
   const tabs=[["processes","Processes"],["positions","Position Types"],["sources","Lead Sources"],["reasons","Reasons"],["stages","Funnel Stages"],["dialing","Dialing Settings"],["queue","IVR Queue"]];
   return(
     <div>
-      <div className="page-header"><div><div className="page-title">HireFlow Settings</div><div className="page-sub">Manage the lookup lists used across the hiring funnel</div></div></div>
+      <div className="page-header"><div><div className="page-title">Hire Flow Settings</div><div className="page-sub">Manage the lookup lists used across the hiring funnel</div></div></div>
       <div className="page-content">
         <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
           {tabs.map(([id,label])=>(
@@ -2146,11 +2217,17 @@ function HireFlowCandidates({ showToast }) {
   const [dashFrom,setDashFrom]=useState(today());
   const [dashTo,setDashTo]=useState(today());
   const [dashRecruiter,setDashRecruiter]=useState("");
+  const [dashRecruiterInit,setDashRecruiterInit]=useState(false);
   const role=getRole();
   const myUserId=users.find(u=>u.email===getEmail())?.id;
   const reporteeIds=users.filter(u=>u.manager_id===myUserId).map(u=>u.id);
 
   useEffect(()=>{loadAll();},[]);
+  useEffect(()=>{
+    if(!dashRecruiterInit&&myUserId&&["ADMIN","MANAGER"].includes(role)){
+      setDashRecruiter(myUserId);setDashRecruiterInit(true);
+    }
+  },[myUserId,role,dashRecruiterInit]);
 
   async function loadAll(){
     setLoading(true);
@@ -2360,7 +2437,7 @@ function HireFlowCandidates({ showToast }) {
   return(
     <div>
       <div className="page-header">
-        <div><div className="page-title">HireFlow</div><div className="page-sub">Hiring funnel — from first contact to hired</div></div>
+        <div><div className="page-title">Hire Flow</div><div className="page-sub">Hiring funnel — from first contact to hired</div></div>
         {pageTab==="pipeline"&&(
           <div style={{display:"flex",gap:8}}>
             <input ref={fileRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>handleUpload(e.target.files[0])}/>
@@ -2754,8 +2831,8 @@ export default function App() {
 
   const allNav=[
     {id:"dashboard",label:"Dashboard",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"hireflow",label:"HireFlow",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"hireflow-settings",label:"HireFlow Settings",icon:"",roles:["ADMIN","MANAGER"]},
+    {id:"hireflow",label:"Hire Flow",icon:"",roles:["ADMIN","MANAGER","HR"]},
+    {id:"hireflow-settings",label:"Hire Flow Settings",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"campaigns",label:"IVR Campaigns",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"leads",label:"Leads",icon:"",roles:["ADMIN","MANAGER","HR"]},
     {id:"interested",label:"IVR Interested Candidates",icon:"",roles:["ADMIN","MANAGER","HR"]},
