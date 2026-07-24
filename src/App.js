@@ -74,7 +74,10 @@ return `
   .err{color:${t.red};font-size:13px;margin-top:10px;text-align:center;}
   .warn{color:${t.amber};font-size:12px;margin-top:6px;display:flex;align-items:center;gap:6px;}
   .app{display:flex;height:100vh;overflow:hidden;}
-  .sidebar{width:232px;background:${t.surface};border-right:1px solid ${t.border};display:flex;flex-direction:column;flex-shrink:0;}
+  .sidebar{width:200px;background:${t.surface};border-right:1px solid ${t.border};display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;}
+  .sidebar.collapsed{width:0;border-right-color:transparent;}
+  .sidebar-toggle{position:fixed;top:14px;left:14px;z-index:30;width:30px;height:30px;border-radius:8px;background:${t.card};border:1px solid ${t.border};color:${t.muted};display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;box-shadow:0 1px 2px ${t.shadow};transition:background 0.15s ${ease},color 0.15s ${ease},left 0.2s ${ease};}
+  .sidebar-toggle:hover{background:${t.bg};color:${t.text};}
   .sidebar-header{padding:22px 20px 18px;border-bottom:1px solid ${t.border};}
   .sidebar-brand{font-size:20px;font-weight:800;color:${t.accent};letter-spacing:-0.5px;}
   .sidebar-tagline{font-size:11px;color:${t.muted};margin-top:2px;font-weight:500;}
@@ -3329,6 +3332,10 @@ export default function App() {
     if(role==="CEO"&&!CEO_PAGES.includes(page)){setPage("dashboard");localStorage.setItem("sb_page","dashboard");}
   },[role]);
   const [isDark,setIsDark]=useState(()=>localStorage.getItem("theme")!=="light");
+  const [sidebarCollapsed,setSidebarCollapsed]=useState(()=>localStorage.getItem("sb_sidebar_collapsed")==="1");
+  function toggleSidebar(){
+    setSidebarCollapsed(v=>{const nv=!v;localStorage.setItem("sb_sidebar_collapsed",nv?"1":"0");return nv;});
+  }
   const [isRecovery,setIsRecovery]=useState(()=>{
     const hash = window.location.hash;
     const recovering = hash.includes("type=recovery");
@@ -3403,8 +3410,9 @@ export default function App() {
     <>
       <style id="vcatch-theme">{getThemeCSS(T_cur)}</style>
       <div className="app">
+        <button className="sidebar-toggle" style={{left:sidebarCollapsed?14:186}} onClick={toggleSidebar} title={sidebarCollapsed?"Show sidebar":"Hide sidebar"}>{sidebarCollapsed?"»":"«"}</button>
         {/* SIDEBAR */}
-        <div className="sidebar">
+        <div className={`sidebar ${sidebarCollapsed?"collapsed":""}`}>
           <div className="sidebar-header">
             <div style={{background:"#fff",borderRadius:8,padding:"6px 12px",display:"inline-block",marginBottom:4}}>
               <img src={LOGO_BASE64} alt="VCatch" style={{height:24,display:"block"}}/>
