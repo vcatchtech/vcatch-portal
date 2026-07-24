@@ -2688,27 +2688,34 @@ function MiniBarChart({ data, valueKey, color, formatLabel }) {
 
 function Reports({ showToast }) {
   const [view, setView] = useState("day");
+  const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 13); return d.toISOString().split("T")[0]; });
+  const [dateTo, setDateTo] = useState(today());
   const [callLogs, setCallLogs] = useState([]);
-  const [hireEvents, setHireEvents] = useState([]);
+  const [hireEvents, setHireEvents] = useState([]); // {candidate_id, changed_at}
+  const [candidates, setCandidates] = useState([]); // {id, assigned_to, current_stage_id, assigned_at}
+  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [dateFrom, dateTo]);
 
   async function load() {
     setLoading(true);
     try {
-      const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-      const [logs, stages] = await Promise.all([
-        dbSelect("call_logs", `?select=logged_at&logged_at=gte.${since}`),
+      const [logs, stages, cands, userList] = await Promise.all([
+        dbSelect("call_logs", `?select=logged_at&logged_at=gte.${dateFrom}T00:00:00&logged_at=lte.${dateTo}T23:59:59`),
         dbSelect("funnel_stages", "?select=id,name"),
+        dbSelect("candidates", "?select=id,assigned_to,current_stage_id,assigned_at"),
+        dbSelect("user_roles", "?select=id,name,email,role"),
       ]);
       const hiredStage = stages.find(s => s.name === "Hired");
       let hires = [];
       if (hiredStage) {
-        hires = await dbSelect("candidate_activity", `?select=changed_at&type=eq.STAGE_CHANGE&to_stage_id=eq.${hiredStage.id}&changed_at=gte.${since}`);
+        hires = await dbSelect("candidate_activity", `?select=candidate_id,changed_at&type=eq.STAGE_CHANGE&to_stage_id=eq.${hiredStage.id}&changed_at=gte.${dateFrom}T00:00:00&changed_at=lte.${dateTo}T23:59:59`);
       }
       setCallLogs(logs);
       setHireEvents(hires);
+      setCandidates(cands);
+      setUsers(userList);
     } catch (e) { showToast("Failed to load reports", "error"); }
     finally { setLoading(false); }
   }
@@ -2721,15 +2728,19 @@ function Reports({ showToast }) {
     monday.setUTCDate(d.getUTCDate() - dow);
     return monday.toISOString().split("T")[0];
   }
-
-  const n = view === "day" ? 14 : 8;
   const keyFn = view === "day" ? dayKey : weekKey;
-  const stepMs = view === "day" ? 86400000 : 7 * 86400000;
 
   const buckets = (() => {
     const keys = [];
-    const now = new Date();
-    for (let i = n - 1; i >= 0; i--) keys.push(keyFn(new Date(now.getTime() - i * stepMs).toISOString()));
+    if (view === "day") {
+      let cur = new Date(dateFrom + "T00:00:00Z");
+      const end = new Date(dateTo + "T00:00:00Z");
+      while (cur <= end && keys.length < 90) { keys.push(cur.toISOString().split("T")[0]); cur.setUTCDate(cur.getUTCDate() + 1); }
+    } else {
+      let cur = new Date(weekKey(dateFrom + "T00:00:00Z") + "T00:00:00Z");
+      const end = new Date(weekKey(dateTo + "T00:00:00Z") + "T00:00:00Z");
+      while (cur <= end && keys.length < 60) { keys.push(cur.toISOString().split("T")[0]); cur.setUTCDate(cur.getUTCDate() + 7); }
+    }
     const callMap = {}, hireMap = {};
     callLogs.forEach(l => { const k = keyFn(l.logged_at); callMap[k] = (callMap[k] || 0) + 1; });
     hireEvents.forEach(h => { const k = keyFn(h.changed_at); hireMap[k] = (hireMap[k] || 0) + 1; });
@@ -2738,39 +2749,105 @@ function Reports({ showToast }) {
 
   const totalCalls = buckets.reduce((s, b) => s + b.calls, 0);
   const totalHires = buckets.reduce((s, b) => s + b.hires, 0);
-  const conversion = totalCalls ? Math.round((totalHires / totalCalls) * 1000) / 10 : 0;
 
   function formatDayLabel(k) { return new Date(k + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
   function formatWeekLabel(k) { return "Wk " + new Date(k + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
   const formatLabel = view === "day" ? formatDayLabel : formatWeekLabel;
 
+  function quickRange(days) {
+    const to = new Date();
+    const from = new Date(); from.setDate(to.getDate() - (days - 1));
+    setDateFrom(from.toISOString().split("T")[0]);
+    setDateTo(to.toISOString().split("T")[0]);
+  }
+
+  // Per-recruiter Hire Flow performance — call_logs has no recruiter/candidate
+  // attribution at all (just phone/campaign/disposition), so this is scoped
+  // to Hire Flow only, where candidates.assigned_to gives real ownership.
+  const hireCountByCandidate = {};
+  hireEvents.forEach(h => { hireCountByCandidate[h.candidate_id] = (hireCountByCandidate[h.candidate_id] || 0) + 1; });
+  const recruiterStats = users
+    .filter(u => ["HR", "MANAGER", "ADMIN"].includes(u.role))
+    .map(u => {
+      const assignedInRange = candidates.filter(c => {
+        if (c.assigned_to !== u.id || !c.assigned_at) return false;
+        const d = new Date(c.assigned_at).toISOString().split("T")[0];
+        return d >= dateFrom && d <= dateTo;
+      }).length;
+      const hired = candidates.filter(c => c.assigned_to === u.id && hireCountByCandidate[c.id]).length;
+      return { id: u.id, name: u.name || u.email, assignedInRange, hired };
+    })
+    .filter(r => r.assignedInRange > 0 || r.hired > 0)
+    .sort((a, b) => b.hired - a.hired || b.assignedInRange - a.assignedInRange);
+
   return (
     <div>
       <div className="page-header">
-        <div><div className="page-title">Reports</div><div className="page-sub">Company-wide productivity — calling &amp; hiring</div></div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className={`btn btn-sm ${view === "day" ? "" : "btn-ghost"}`} onClick={() => setView("day")}>Day-wise</button>
-          <button className={`btn btn-sm ${view === "week" ? "" : "btn-ghost"}`} onClick={() => setView("week")}>Week-wise</button>
-          <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
-        </div>
+        <div><div className="page-title">Reports</div><div className="page-sub">Company-wide productivity tracking</div></div>
+        <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
       </div>
       <div className="page-content">
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 20 }}>
+          <input type="date" className="filter-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" />
+          <input type="date" className="filter-input" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" />
+          <button className="btn btn-sm btn-ghost" onClick={() => quickRange(7)}>7 Days</button>
+          <button className="btn btn-sm btn-ghost" onClick={() => quickRange(30)}>30 Days</button>
+          <button className="btn btn-sm btn-ghost" onClick={() => quickRange(90)}>90 Days</button>
+          <span style={{ width: 1, height: 20, background: T.border, margin: "0 4px" }} />
+          <button className={`btn btn-sm ${view === "day" ? "" : "btn-ghost"}`} onClick={() => setView("day")}>Day-wise</button>
+          <button className={`btn btn-sm ${view === "week" ? "" : "btn-ghost"}`} onClick={() => setView("week")}>Week-wise</button>
+        </div>
+
         {loading ? <div className="empty-state">Loading...</div> : (
           <>
+            {/* IVR Calling */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12, paddingBottom: 10, borderBottom: `2px solid ${T.purple}` }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: T.text }}>IVR Calling</div>
+                <div style={{ fontSize: 12, color: T.muted }}>Dialer activity — not tied to a specific recruiter</div>
+              </div>
+            </div>
             <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))" }}>
-              <div className="kpi-card"><div className="kpi-label">Total Calls</div><div className="kpi-value blue">{totalCalls}</div><div className="kpi-sub">Last {view === "day" ? "14 days" : "8 weeks"}</div></div>
-              <div className="kpi-card"><div className="kpi-label">Total Hired</div><div className="kpi-value green">{totalHires}</div><div className="kpi-sub">Last {view === "day" ? "14 days" : "8 weeks"}</div></div>
-              <div className="kpi-card"><div className="kpi-label">Calls → Hire Rate</div><div className="kpi-value amber">{conversion}%</div><div className="kpi-sub">Hires / total calls</div></div>
+              <div className="kpi-card"><div className="kpi-label">Total Calls</div><div className="kpi-value blue">{totalCalls}</div><div className="kpi-sub">{dateFrom} → {dateTo}</div></div>
+            </div>
+            <div className="card">
+              <div className="card-header"><div className="card-title">Calling Trend</div></div>
+              <div className="card-body"><MiniBarChart data={buckets} valueKey="calls" color={T.accent} formatLabel={formatLabel} /></div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 16, marginBottom: 4 }}>
-              <div className="card">
-                <div className="card-header"><div className="card-title">Calling Trend</div></div>
-                <div className="card-body"><MiniBarChart data={buckets} valueKey="calls" color={T.accent} formatLabel={formatLabel} /></div>
+            {/* Hire Flow */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 28, marginBottom: 12, paddingBottom: 10, borderBottom: `2px solid ${T.accent}` }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: T.text }}>Hire Flow</div>
+                <div style={{ fontSize: 12, color: T.muted }}>Hiring pipeline outcomes</div>
               </div>
-              <div className="card">
-                <div className="card-header"><div className="card-title">Hiring Trend</div></div>
-                <div className="card-body"><MiniBarChart data={buckets} valueKey="hires" color={T.green} formatLabel={formatLabel} /></div>
+            </div>
+            <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))" }}>
+              <div className="kpi-card"><div className="kpi-label">Total Hired</div><div className="kpi-value green">{totalHires}</div><div className="kpi-sub">{dateFrom} → {dateTo}</div></div>
+            </div>
+            <div className="card" style={{ marginBottom: 20 }}>
+              <div className="card-header"><div className="card-title">Hiring Trend</div></div>
+              <div className="card-body"><MiniBarChart data={buckets} valueKey="hires" color={T.green} formatLabel={formatLabel} /></div>
+            </div>
+
+            <div className="card" style={{ marginBottom: 20 }}>
+              <div className="card-header"><div className="card-title">HR Performance</div><span style={{ fontSize: 12, color: T.muted }}>{dateFrom} → {dateTo}</span></div>
+              <div className="table-wrap">
+                {recruiterStats.length === 0 ? (
+                  <div className="empty-state"><div className="empty-title">No activity in this range</div></div>
+                ) : (
+                  <table>
+                    <thead><tr><th>Recruiter</th><th>Assigned</th><th>Hired</th><th>Conversion</th></tr></thead>
+                    <tbody>{recruiterStats.map(r => (
+                      <tr key={r.id}>
+                        <td style={{ fontWeight: 500 }}>{r.name}</td>
+                        <td>{r.assignedInRange}</td>
+                        <td style={{ color: r.hired ? T.green : undefined, fontWeight: r.hired ? 600 : undefined }}>{r.hired}</td>
+                        <td>{r.assignedInRange ? Math.round((r.hired / r.assignedInRange) * 1000) / 10 : 0}%</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                )}
               </div>
             </div>
 
@@ -2778,13 +2855,12 @@ function Reports({ showToast }) {
               <div className="card-header"><div className="card-title">{view === "day" ? "Day-wise" : "Week-wise"} Breakdown</div></div>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>{view === "day" ? "Date" : "Week Of"}</th><th>Calls</th><th>Hired</th><th>Conversion</th></tr></thead>
+                  <thead><tr><th>{view === "day" ? "Date" : "Week Of"}</th><th>Calls</th><th>Hired</th></tr></thead>
                   <tbody>{[...buckets].reverse().map(b => (
                     <tr key={b.key}>
                       <td>{formatLabel(b.key)}</td>
                       <td>{b.calls}</td>
                       <td style={{ color: b.hires ? T.green : undefined, fontWeight: b.hires ? 600 : undefined }}>{b.hires}</td>
-                      <td>{b.calls ? Math.round((b.hires / b.calls) * 1000) / 10 : 0}%</td>
                     </tr>
                   ))}</tbody>
                 </table>
