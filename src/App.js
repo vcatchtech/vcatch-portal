@@ -443,13 +443,13 @@ function LoginPage({ onLogin }) {
 function Dashboard({ showToast, role }) {
   const [stats,setStats]=useState(null);
   const [dialerStatus,setDialerStatus]=useState(null);
-  const [recentLogs,setRecentLogs]=useState([]);
   const [testPhone,setTestPhone]=useState("");
   const [testLoading,setTestLoading]=useState(false);
   const [dateFrom,setDateFrom]=useState(()=>loadFilter("dash_from",today()));
   const [dateTo,setDateTo]=useState(()=>loadFilter("dash_to",today()));
   const [campaignFilter,setCampaignFilter]=useState("");
   const [campaignList,setCampaignList]=useState([]);
+  const [hfSummary,setHfSummary]=useState(null);
 
   useEffect(()=>{
     loadAll();
@@ -462,7 +462,23 @@ function Dashboard({ showToast, role }) {
   },[]);
   useEffect(()=>{saveFilter("dash_from",dateFrom);saveFilter("dash_to",dateTo);loadStats();},[dateFrom,dateTo,campaignFilter]);
 
-  async function loadAll(){await Promise.all([loadStats(),loadDialerStatus()]);}
+  async function loadAll(){await Promise.all([loadStats(),loadDialerStatus(),loadHireFlowSummary()]);}
+
+  async function loadHireFlowSummary(){
+    try{
+      const [cands,stages]=await Promise.all([
+        dbSelect("candidates","?select=current_stage_id"),
+        dbSelect("funnel_stages","?select=id,name"),
+      ]);
+      const stageName=Object.fromEntries(stages.map(s=>[s.id,s.name]));
+      const total=cands.length;
+      const hired=cands.filter(c=>stageName[c.current_stage_id]==="Hired").length;
+      const rejected=cands.filter(c=>stageName[c.current_stage_id]==="Rejected").length;
+      const notInterested=cands.filter(c=>stageName[c.current_stage_id]==="Not Interested").length;
+      const inPipeline=total-hired-rejected-notInterested;
+      setHfSummary({total,hired,rejected,notInterested,inPipeline,conversion:total?Math.round((hired/total)*100):0});
+    }catch(e){}
+  }
 
   async function loadStats(){
     try{
@@ -482,11 +498,6 @@ function Dashboard({ showToast, role }) {
         pending:leads.filter(l=>["PENDING","CALLED"].includes(l.status)).length,
         byDisp,
       });
-      let rp="?select=phone,campaign,sub_disposition,logged_at&order=logged_at.desc&limit=8";
-      if(dateFrom) rp+=`&logged_at=gte.${dateFrom}T00:00:00`;
-      if(dateTo) rp+=`&logged_at=lte.${dateTo}T23:59:59`;
-      if(campaignFilter) rp+=`&campaign=eq.${encodeURIComponent(campaignFilter)}`;
-      setRecentLogs(await dbSelect("call_logs",rp));
     }catch(e){}
   }
   async function loadDialerStatus(){try{setDialerStatus(await renderFetch("/campaign/status"));}catch{}}
@@ -575,27 +586,43 @@ function Dashboard({ showToast, role }) {
           </div>
         )}
 
-        {/* Recent Calls */}
-        <div className="card">
-          <div className="card-header"><div className="card-title">Recent Calls</div><span style={{fontSize:12,color:T.muted}}>Last 8</span></div>
-          <div className="table-wrap">
-            {recentLogs.length===0?(
-              <div className="empty-state"><div className="empty-icon">📞</div><div className="empty-title">No calls yet</div></div>
-            ):(
-              <table>
-                <thead><tr><th>Phone</th><th>Campaign</th><th>Result</th><th>Time</th></tr></thead>
-                <tbody>{recentLogs.map((log,i)=>(
-                  <tr key={i}>
-                    <td style={{fontFamily:"monospace",fontWeight:500}}>{log.phone}</td>
-                    <td><span className="tag">{log.campaign}</span></td>
-                    <td><DisposBadge sub={log.sub_disposition}/></td>
-                    <td style={{color:T.muted,fontSize:12}}>{new Date(log.logged_at).toLocaleString("en-IN")}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            )}
+        {/* HireFlow Overview */}
+        {hfSummary&&(
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">Hiring Overview</div>
+              <span style={{fontSize:12,color:T.muted}}>All time — HireFlow</span>
+            </div>
+            <div className="card-body" style={{padding:"12px 20px"}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10}}>
+                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Total Candidates</div>
+                  <div style={{fontSize:20,fontWeight:700,color:T.accent}}>{hfSummary.total}</div>
+                </div>
+                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>In Pipeline</div>
+                  <div style={{fontSize:20,fontWeight:700}}>{hfSummary.inPipeline}</div>
+                </div>
+                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Hired</div>
+                  <div style={{fontSize:20,fontWeight:700,color:T.green}}>{hfSummary.hired}</div>
+                </div>
+                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Rejected</div>
+                  <div style={{fontSize:20,fontWeight:700,color:T.red}}>{hfSummary.rejected}</div>
+                </div>
+                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Not Interested</div>
+                  <div style={{fontSize:20,fontWeight:700,color:T.amber}}>{hfSummary.notInterested}</div>
+                </div>
+                <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Conversion</div>
+                  <div style={{fontSize:20,fontWeight:700,color:T.accent}}>{hfSummary.conversion}%</div>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
