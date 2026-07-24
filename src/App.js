@@ -518,10 +518,10 @@ function Dashboard({ showToast, role }) {
         return true;
       });
       const total=scoped.length;
-      const hired=scoped.filter(c=>stageName[c.current_stage_id]==="Hired").length;
+      const hiredCurrent=scoped.filter(c=>stageName[c.current_stage_id]==="Hired").length;
       const rejected=scoped.filter(c=>stageName[c.current_stage_id]==="Rejected").length;
       const notInterested=scoped.filter(c=>stageName[c.current_stage_id]==="Not Interested").length;
-      const inPipeline=total-hired-rejected-notInterested;
+      const inPipeline=total-hiredCurrent-rejected-notInterested;
 
       const inRange=iso=>{
         if(!hfDateFrom&&!hfDateTo)return true;
@@ -537,6 +537,7 @@ function Dashboard({ showToast, role }) {
       setHfAttemptEvents(attemptEvents);
       setHfHireEvents(hireEventsInRange);
 
+      const hired=hireEventsInRange.length;
       setHfSummary({total,hired,rejected,notInterested,inPipeline,conversion:total?Math.round((hired/total)*100):0,attempted:attemptEvents.length,interviews:interviewEvents.length});
 
       if(["ADMIN","MANAGER","CEO"].includes(role)){
@@ -711,7 +712,7 @@ function Dashboard({ showToast, role }) {
             </div>
 
             <div className="card" style={{marginBottom:16}}>
-              <div className="card-header"><div className="card-title">Hiring Trend</div></div>
+              <div className="card-header"><div className="card-title">Hiring Trend</div><span style={{fontSize:12,color:T.muted}}>{hfSummary.attempted} attempted in range</span></div>
               <div className="card-body"><MiniBarChart data={hfBuckets} valueKey="hires" color={T.green} formatLabel={hfFormatLabel}/></div>
             </div>
 
@@ -777,6 +778,8 @@ function Dashboard({ showToast, role }) {
         {/* KPIs */}
         <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))"}}>
           <div className="kpi-card"><div className="kpi-label">Total Calls</div><div className="kpi-value blue">{stats?.total??0}</div><div className="kpi-sub">{dateFrom||dateTo?"Filtered period":"All time"}</div></div>
+          <div className="kpi-card"><div className="kpi-label">Interested Cases</div><div className="kpi-value green">{stats?.interested??0}</div><div className="kpi-sub">Out of {stats?.total??0} calls</div></div>
+          <div className="kpi-card"><div className="kpi-label">Conversion</div><div className="kpi-value amber">{stats?.total?Math.round(((stats.interested||0)/stats.total)*1000)/10:0}%</div><div className="kpi-sub">Interested / total calls</div></div>
           <div className="kpi-card"><div className="kpi-label">Pending Leads</div><div className="kpi-value amber">{stats?.pending??0}</div><div className="kpi-sub">Awaiting next dial</div></div>
         </div>
 
@@ -799,9 +802,11 @@ function Dashboard({ showToast, role }) {
                   ["Not Interested",stats.byDisp?.NOT_INTERESTED||0,T.red],
                   ["No Response",stats.byDisp?.NO_RESPONSE||0,T.amber],
                   ["Invalid Input",stats.byDisp?.INVALID_INPUT||0,T.amber],
+                  ["Disconnected",stats.byDisp?.CALL_DISCONNECTED||0,T.muted],
                   ["Busy",stats.byDisp?.BUSY||0,T.muted],
                   ["Failed",stats.byDisp?.FAILED||0,T.muted],
-                ].map(([label,count,color])=>(
+                  ["Other",Math.max(0,stats.total-["INTERESTED","NOT_INTERESTED","NO_RESPONSE","INVALID_INPUT","CALL_DISCONNECTED","BUSY","FAILED"].reduce((s,k)=>s+(stats.byDisp?.[k]||0),0)),T.muted],
+                ].filter(([label,count])=>label!=="Other"||count>0).map(([label,count,color])=>(
                   <div key={label} style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
                     <div style={{fontSize:11,color:T.muted,marginBottom:4}}>{label}</div>
                     <div style={{fontSize:20,fontWeight:700,color}}>{count}</div>
@@ -2080,6 +2085,8 @@ function PositionOpenings({ showToast }) {
   const [processes,setProcesses]=useState([]);
   const [positionTypes,setPositionTypes]=useState([]);
   const [candidates,setCandidates]=useState([]);
+  const [hiredCandidates,setHiredCandidates]=useState([]);
+  const [linkChoice,setLinkChoice]=useState({});
   const [loading,setLoading]=useState(false);
   const [statusFilter,setStatusFilter]=useState("OPEN");
   const [form,setForm]=useState({company_id:"",process_id:"",position_type_id:"",target_count:1,note:""});
@@ -2091,17 +2098,22 @@ function PositionOpenings({ showToast }) {
   async function load(){
     setLoading(true);
     try{
-      const [ops,comps,procs,posTypes,users,cands]=await Promise.all([
+      const [ops,comps,procs,posTypes,users,cands,stages]=await Promise.all([
         dbSelect("position_openings","?select=*&order=created_at.desc"),
         dbSelect("companies","?select=*&order=name"),
         dbSelect("processes","?select=*&order=name"),
         dbSelect("position_types","?select=*&order=name"),
         dbSelect("user_roles","?select=id,name,email"),
         dbSelect("candidates","?select=id,filled_opening_id&filled_opening_id=not.is.null"),
+        dbSelect("funnel_stages","?select=id,name"),
       ]);
       setOpenings(ops);setCompanies(comps);setProcesses(procs);setPositionTypes(posTypes);setCandidates(cands);
       const me=users.find(u=>u.email===getEmail());
       myUserId.current=me?.id||null;
+      const hiredStageId=stages.find(s=>s.name==="Hired")?.id;
+      if(hiredStageId){
+        setHiredCandidates(await dbSelect("candidates",`?select=id,name,phone&current_stage_id=eq.${hiredStageId}&filled_opening_id=is.null`));
+      }
     }catch(e){showToast("Failed to load position openings","error");}
     finally{setLoading(false);}
   }
@@ -2111,6 +2123,25 @@ function PositionOpenings({ showToast }) {
   const positionMap=Object.fromEntries(positionTypes.map(p=>[p.id,p.name]));
   const filledCountByOpening={};
   candidates.forEach(c=>{if(c.filled_opening_id)filledCountByOpening[c.filled_opening_id]=(filledCountByOpening[c.filled_opening_id]||0)+1;});
+  const openOptions=openings.filter(o=>o.status==="OPEN");
+  function openingLabelFor(o){
+    return `${companyMap[o.company_id]||"—"} / ${processMap[o.process_id]||"—"} / ${positionMap[o.position_type_id]||"—"}`;
+  }
+
+  async function linkHire(candidateId){
+    const openingId=linkChoice[candidateId];
+    if(!openingId){showToast("Pick an opening first","error");return;}
+    try{
+      await dbUpdate("candidates",`id=eq.${candidateId}`,{filled_opening_id:openingId});
+      const opening=openings.find(o=>o.id===openingId);
+      await dbInsert("candidate_activity",{
+        candidate_id:candidateId,type:"NOTE",is_contact_attempt:false,
+        remark:`Linked to opening: ${companyMap[opening.company_id]} / ${processMap[opening.process_id]} / ${positionMap[opening.position_type_id]}`,
+        changed_by:myUserId.current,
+      });
+      showToast("Linked","success");load();
+    }catch{showToast("Failed to link","error");}
+  }
 
   async function createOpening(){
     if(!form.company_id||!form.process_id||!form.position_type_id){showToast("Pick company, process, and position","error");return;}
@@ -2190,6 +2221,33 @@ function PositionOpenings({ showToast }) {
                 <button className="btn btn-sm" onClick={createOpening} disabled={creating}>{creating?"Opening...":"Open Position"}</button>
               </div>
             </div>
+
+            {hiredCandidates.length>0&&(
+              <div className="card" style={{marginBottom:16}}>
+                <div className="card-header">
+                  <div className="card-title">Unlinked Hires ({hiredCandidates.length})</div>
+                  <span style={{fontSize:12,color:T.muted}}>Hired candidates not yet counted against any opening</span>
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Name</th><th>Phone</th><th>Fills Which Opening?</th><th>Actions</th></tr></thead>
+                    <tbody>{hiredCandidates.map(c=>(
+                      <tr key={c.id}>
+                        <td style={{fontWeight:500}}>{c.name}</td>
+                        <td style={{fontFamily:"monospace"}}>{c.phone}</td>
+                        <td>
+                          <select className="filter-select" value={linkChoice[c.id]||""} onChange={e=>setLinkChoice({...linkChoice,[c.id]:e.target.value})}>
+                            <option value="">—</option>
+                            {openOptions.map(o=><option key={o.id} value={o.id}>{openingLabelFor(o)}</option>)}
+                          </select>
+                        </td>
+                        <td><button className="btn btn-sm btn-ghost" onClick={()=>linkHire(c.id)}>Link</button></td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="card">
               <div className="card-header">
