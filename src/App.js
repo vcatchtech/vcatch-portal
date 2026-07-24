@@ -533,11 +533,16 @@ function Dashboard({ showToast, role }) {
       const scopedActivity=activity.filter(a=>ownerScopedIds.has(a.candidate_id)&&inRange(a.changed_at));
       const attemptEvents=scopedActivity.filter(a=>a.type==="CALL_ATTEMPT");
       const interviewEvents=interviewId?scopedActivity.filter(a=>a.type==="STAGE_CHANGE"&&a.to_stage_id===interviewId):[];
-      const hireEventsInRange=hiredId?scopedActivity.filter(a=>a.type==="STAGE_CHANGE"&&a.to_stage_id===hiredId):[];
+      // Bucketed by assigned_at (not the hire's own changed_at) so the trend
+      // chart's bars always sum to exactly the Hired KPI below — both use the
+      // same assigned-in-range cohort. A candidate hired long after being
+      // assigned would otherwise show up in the KPI total but fall outside
+      // the visible date buckets, making the chart look like it doesn't add up.
+      const hireEventsInRange=scoped.filter(c=>stageName[c.current_stage_id]==="Hired").map(c=>({candidate_id:c.id,changed_at:c.assigned_at}));
       setHfAttemptEvents(attemptEvents);
       setHfHireEvents(hireEventsInRange);
 
-      const hired=hireEventsInRange.length;
+      const hired=hiredCurrent;
       setHfSummary({total,hired,rejected,notInterested,inPipeline,conversion:total?Math.round((hired/total)*100):0,attempted:attemptEvents.length,interviews:interviewEvents.length});
 
       if(["ADMIN","MANAGER","CEO"].includes(role)){
@@ -711,9 +716,15 @@ function Dashboard({ showToast, role }) {
               </div>
             </div>
 
-            <div className="card" style={{marginBottom:16}}>
-              <div className="card-header"><div className="card-title">Hiring Trend</div><span style={{fontSize:12,color:T.muted}}>{hfSummary.attempted} attempted in range</span></div>
-              <div className="card-body"><MiniBarChart data={hfBuckets} valueKey="hires" color={T.green} formatLabel={hfFormatLabel}/></div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:16,marginBottom:16}}>
+              <div className="card">
+                <div className="card-header"><div className="card-title">Attempted Trend</div></div>
+                <div className="card-body"><MiniBarChart data={hfBuckets} valueKey="attempted" color={T.accent} formatLabel={hfFormatLabel}/></div>
+              </div>
+              <div className="card">
+                <div className="card-header"><div className="card-title">Hiring Trend</div></div>
+                <div className="card-body"><MiniBarChart data={hfBuckets} valueKey="hires" color={T.green} formatLabel={hfFormatLabel}/></div>
+              </div>
             </div>
 
             {["ADMIN","MANAGER","CEO"].includes(role)&&hfRecruiterStats.length>0&&(
@@ -783,40 +794,50 @@ function Dashboard({ showToast, role }) {
           <div className="kpi-card"><div className="kpi-label">Pending Leads</div><div className="kpi-value amber">{stats?.pending??0}</div><div className="kpi-sub">Awaiting next dial</div></div>
         </div>
 
-        <div className="card" style={{marginBottom:16}}>
-          <div className="card-header"><div className="card-title">Calling Trend</div></div>
-          <div className="card-body"><MiniBarChart data={ivrBuckets} valueKey="calls" color={T.accent} formatLabel={ivrFormatLabel}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:16,marginBottom:16}}>
+          <div className="card">
+            <div className="card-header"><div className="card-title">Calling Trend</div></div>
+            <div className="card-body"><MiniBarChart data={ivrBuckets} valueKey="calls" color={T.accent} formatLabel={ivrFormatLabel}/></div>
+          </div>
+          <div className="card">
+            <div className="card-header"><div className="card-title">Interested Trend</div></div>
+            <div className="card-body"><MiniBarChart data={ivrBuckets} valueKey="interested" color={T.green} formatLabel={ivrFormatLabel}/></div>
+          </div>
         </div>
 
         {/* Disposition Breakdown */}
-        {stats&&(
-          <div className="card" style={{marginBottom:20}}>
-            <div className="card-header">
-              <div className="card-title">Disposition Breakdown</div>
-              <span style={{fontSize:12,color:T.muted}}>{stats.total} total calls</span>
-            </div>
-            <div className="card-body" style={{padding:"12px 20px"}}>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
-                {[
-                  ["Interested",stats.byDisp?.INTERESTED||0,T.green],
-                  ["Not Interested",stats.byDisp?.NOT_INTERESTED||0,T.red],
-                  ["No Response",stats.byDisp?.NO_RESPONSE||0,T.amber],
-                  ["Invalid Input",stats.byDisp?.INVALID_INPUT||0,T.amber],
-                  ["Disconnected",stats.byDisp?.CALL_DISCONNECTED||0,T.muted],
-                  ["Busy",stats.byDisp?.BUSY||0,T.muted],
-                  ["Failed",stats.byDisp?.FAILED||0,T.muted],
-                  ["Other",Math.max(0,stats.total-["INTERESTED","NOT_INTERESTED","NO_RESPONSE","INVALID_INPUT","CALL_DISCONNECTED","BUSY","FAILED"].reduce((s,k)=>s+(stats.byDisp?.[k]||0),0)),T.muted],
-                ].filter(([label,count])=>label!=="Other"||count>0).map(([label,count,color])=>(
-                  <div key={label} style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>{label}</div>
-                    <div style={{fontSize:20,fontWeight:700,color}}>{count}</div>
-                    <div style={{fontSize:11,color:T.muted}}>{stats.total?Math.round((count/stats.total)*100):0}%</div>
+        {stats&&(()=>{
+          const rows=[
+            ["Interested",stats.byDisp?.INTERESTED||0,T.green],
+            ["Not Interested",stats.byDisp?.NOT_INTERESTED||0,T.red],
+            ["No Response",stats.byDisp?.NO_RESPONSE||0,T.amber],
+            ["Invalid Input",stats.byDisp?.INVALID_INPUT||0,T.amber],
+            ["Disconnected",stats.byDisp?.CALL_DISCONNECTED||0,T.muted],
+            ["Busy",stats.byDisp?.BUSY||0,T.muted],
+            ["Failed",stats.byDisp?.FAILED||0,T.muted],
+            ["Other",Math.max(0,stats.total-["INTERESTED","NOT_INTERESTED","NO_RESPONSE","INVALID_INPUT","CALL_DISCONNECTED","BUSY","FAILED"].reduce((s,k)=>s+(stats.byDisp?.[k]||0),0)),T.muted],
+          ].filter(([label,count])=>label!=="Other"||count>0);
+          const max=Math.max(1,...rows.map(r=>r[1]));
+          return(
+            <div className="card" style={{marginBottom:20}}>
+              <div className="card-header">
+                <div className="card-title">Disposition Breakdown</div>
+                <span style={{fontSize:12,color:T.muted}}>{stats.total} total calls</span>
+              </div>
+              <div style={{padding:"8px 20px 20px"}}>
+                {rows.map(([label,count,color])=>(
+                  <div key={label} style={{display:"flex",alignItems:"center",gap:12,padding:"7px 0"}} title={`${label}: ${count}`}>
+                    <div style={{width:110,fontSize:12,color:T.muted,flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</div>
+                    <div style={{flex:1,background:T.border,borderRadius:4,height:10,position:"relative"}}>
+                      <div style={{width:`${(count/max)*100}%`,minWidth:count?4:0,height:10,borderRadius:4,background:color,transition:"width 0.3s ease"}}/>
+                    </div>
+                    <div style={{width:60,fontSize:12,color:T.muted,textAlign:"right",flexShrink:0}}>{count} ({stats.total?Math.round((count/stats.total)*100):0}%)</div>
                   </div>
                 ))}
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
       </div>
     </div>
@@ -1623,8 +1644,8 @@ function AudioManager({ showToast }) {
 // ================================================
 function CallLogs({ showToast }) {
   const [logs,setLogs]=useState([]);const [loading,setLoading]=useState(false);
-  const [fd,setFd]=useState(today());
-  const [td,setTd]=useState(today());
+  const [fd,setFd]=useState("");
+  const [td,setTd]=useState("");
   const [fc,setFc]=useState(()=>loadFilter("logs_campaign","ALL"));
   const [fds,setFds]=useState(()=>loadFilter("logs_disp","ALL"));
   const [limit,setLimit]=useState(()=>loadFilter("logs_limit","ALL"));
@@ -2079,7 +2100,6 @@ function IVRQueue({ showToast }) {
 // POSITION OPENINGS (separate module — Admin/Manager/CEO only)
 // ================================================
 function PositionOpenings({ showToast }) {
-  const [tab,setTab]=useState("openings");
   const [openings,setOpenings]=useState([]);
   const [companies,setCompanies]=useState([]);
   const [processes,setProcesses]=useState([]);
@@ -2177,15 +2197,6 @@ function PositionOpenings({ showToast }) {
     <div>
       <div className="page-header"><div><div className="page-title">Position Openings</div><div className="page-sub">Requisitions across all companies — separate from the hiring pipeline</div></div></div>
       <div className="page-content">
-        <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
-          <button className={`btn btn-sm ${tab==="openings"?"":"btn-ghost"}`} onClick={()=>setTab("openings")}>Openings</button>
-          <button className={`btn btn-sm ${tab==="companies"?"":"btn-ghost"}`} onClick={()=>setTab("companies")}>Companies</button>
-        </div>
-
-        {tab==="companies"?(
-          <SimpleRefList table="companies" title="Companies" placeholder="e.g. VCatch, Catch, Epoch Pride" showToast={showToast}/>
-        ):(
-          <>
             <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))"}}>
               <div className="kpi-card"><div className="kpi-label">Open Positions</div><div className="kpi-value blue">{openCount}</div><div className="kpi-sub">Requisitions</div></div>
               <div className="kpi-card"><div className="kpi-label">Target Headcount</div><div className="kpi-value amber">{openTarget}</div><div className="kpi-sub">Across open positions</div></div>
@@ -2289,8 +2300,6 @@ function PositionOpenings({ showToast }) {
                 )}
               </div>
             </div>
-          </>
-        )}
       </div>
     </div>
   );
@@ -2298,10 +2307,10 @@ function PositionOpenings({ showToast }) {
 
 function HireFlowSettings({ showToast }) {
   const [tab,setTab]=useState("processes");
-  const tabs=[["processes","Processes"],["positions","Position Types"],["sources","Lead Sources"],["reasons","Reasons"],["stages","Funnel Stages"],["dialing","Dialing Settings"],["queue","IVR Queue"]];
+  const tabs=[["processes","Processes"],["positions","Position Types"],["companies","Companies"],["sources","Lead Sources"],["reasons","Reasons"],["stages","Funnel Stages"],["dialing","Dialing Settings"],["queue","IVR Queue"]];
   return(
     <div>
-      <div className="page-header"><div><div className="page-title">Hire Flow Settings</div><div className="page-sub">Manage the lookup lists used across the hiring funnel</div></div></div>
+      <div className="page-header"><div><div className="page-title">Settings</div><div className="page-sub">Manage the lookup lists used across the hiring funnel</div></div></div>
       <div className="page-content">
         <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
           {tabs.map(([id,label])=>(
@@ -2310,6 +2319,7 @@ function HireFlowSettings({ showToast }) {
         </div>
         {tab==="processes"&&<SimpleRefList table="processes" title="Processes" placeholder="e.g. Cred, Smartcoin, ITI Finance" showToast={showToast}/>}
         {tab==="positions"&&<SimpleRefList table="position_types" title="Position Types" placeholder="e.g. Calling Executive, Field AM" showToast={showToast}/>}
+        {tab==="companies"&&<SimpleRefList table="companies" title="Companies" placeholder="e.g. VCatch, Catch, Epoch Pride" showToast={showToast}/>}
         {tab==="sources"&&<SimpleRefList table="lead_sources" title="Lead Sources" placeholder="e.g. Work India, LinkedIn" showToast={showToast}/>}
         {tab==="reasons"&&<SimpleRefList table="rejection_reasons" title="Rejection / Not Interested Reasons" placeholder="e.g. Salary mismatch, Location" showToast={showToast}/>}
         {tab==="stages"&&<FunnelStagesAdmin showToast={showToast}/>}
@@ -2713,6 +2723,7 @@ function HireFlowCandidates({ showToast }) {
   const [processFilter,setProcessFilter]=useState("ALL");
   const [scopeFilter,setScopeFilter]=useState(getRole()==="HR"?"MINE":"ALL");
   const [assigneeFilter,setAssigneeFilter]=useState("");
+  const [colWidths,setColWidths]=useState({});
   const [filterFrom,setFilterFrom]=useState("");
   const [filterTo,setFilterTo]=useState("");
   const [page,setPage]=useState(1);
@@ -2771,8 +2782,26 @@ function HireFlowCandidates({ showToast }) {
   const positionMap=Object.fromEntries(positionTypes.map(p=>[p.id,p.name]));
   const stageMap=Object.fromEntries(funnelStages.map(s=>[s.id,s]));
   const userMap=Object.fromEntries(users.map(u=>[u.id,u]));
+  const sourceMap=Object.fromEntries(leadSources.map(s=>[s.id,s.name]));
   // Candidates can only ever be owned by HR/Manager — Admin and CEO don't work cases.
   const assignableUsers=users.filter(u=>["HR","MANAGER"].includes(u.role));
+
+  function exportCandidatesCSV(){
+    const headers=["Name","Phone","Process","Position","Stage","Assigned To","Remarks","Contacted","Last Activity","Current Salary","Expected Salary","Location","Source","Languages Spoken","Created At"];
+    const rows=filtered.map(c=>{
+      const owner=userMap[c.assigned_to];
+      const summary=activitySummary[c.id];
+      return [
+        c.name,c.phone,processMap[c.process_id]||"",positionMap[c.position_type_id]||"",
+        stageMap[c.current_stage_id]?.name||"",owner?(owner.name||owner.email):"Unassigned",
+        summary?.lastRemark||"",summary?.count||0,
+        summary?.last?new Date(summary.last).toLocaleDateString("en-IN"):"Never",
+        c.current_salary||"",c.expected_salary||"",c.location||"",sourceMap[c.source_id]||"",
+        c.languages_spoken||"",c.created_at?new Date(c.created_at).toLocaleDateString("en-IN"):"",
+      ];
+    });
+    downloadCSV(`hireflow_candidates_${today()}.csv`,headers,rows);
+  }
 
   function isStale(c){
     const last=activitySummary[c.id]?.last||c.updated_at||c.created_at;
@@ -3094,11 +3123,23 @@ function HireFlowCandidates({ showToast }) {
         )}
 
         <div className="card">
-          <div className="card-header"><div className="card-title">Candidates ({filtered.length})</div><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div>
+          <div className="card-header"><div className="card-title">Candidates ({filtered.length})</div><div style={{display:"flex",gap:8}}><button className="btn btn-sm btn-ghost" onClick={exportCandidatesCSV}>Download CSV</button><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div></div>
           <div className="table-wrap">
             {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No candidates found</div></div>:(
-              <table>
-                <thead><tr><th style={{width:22,padding:"8px 4px"}}>#</th>{["ADMIN","MANAGER"].includes(role)&&<th style={{width:22,padding:"8px 4px"}}></th>}<th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Stage</th><th>Assigned To</th><th>Remarks</th><th style={{width:70}}>Contacted</th><th>Last Activity</th></tr></thead>
+              <table style={{tableLayout:"fixed"}}>
+                <thead><tr>
+                  <th style={{width:22,padding:"8px 4px"}}>#</th>
+                  {["ADMIN","MANAGER"].includes(role)&&<th style={{width:22,padding:"8px 4px"}}></th>}
+                  <ResizableTh col="name" widths={colWidths} setWidths={setColWidths} defaultWidth={130}>Name</ResizableTh>
+                  <ResizableTh col="phone" widths={colWidths} setWidths={setColWidths} defaultWidth={100}>Phone</ResizableTh>
+                  <ResizableTh col="process" widths={colWidths} setWidths={setColWidths} defaultWidth={110}>Process</ResizableTh>
+                  <ResizableTh col="position" widths={colWidths} setWidths={setColWidths} defaultWidth={100}>Position</ResizableTh>
+                  <ResizableTh col="stage" widths={colWidths} setWidths={setColWidths} defaultWidth={110}>Stage</ResizableTh>
+                  <ResizableTh col="assigned" widths={colWidths} setWidths={setColWidths} defaultWidth={100}>Assigned To</ResizableTh>
+                  <ResizableTh col="remarks" widths={colWidths} setWidths={setColWidths} defaultWidth={180}>Remarks</ResizableTh>
+                  <th style={{width:70}}>Contacted</th>
+                  <ResizableTh col="lastActivity" widths={colWidths} setWidths={setColWidths} defaultWidth={110}>Last Activity</ResizableTh>
+                </tr></thead>
                 <tbody>{paged.map((c,i)=>{
                   const stage=stageMap[c.current_stage_id];
                   const owner=userMap[c.assigned_to];
@@ -3202,6 +3243,30 @@ function HireFlowCandidates({ showToast }) {
 // ================================================
 // REPORTS (CEO)
 // ================================================
+function ResizableTh({ col, widths, setWidths, defaultWidth, children, style }) {
+  const width=widths[col]||defaultWidth;
+  function onMouseDown(e){
+    e.preventDefault();
+    const startX=e.clientX;
+    function onMove(e2){
+      const delta=e2.clientX-startX;
+      setWidths(w=>({...w,[col]:Math.max(50,width+delta)}));
+    }
+    function onUp(){
+      document.removeEventListener("mousemove",onMove);
+      document.removeEventListener("mouseup",onUp);
+    }
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+  }
+  return (
+    <th style={{...style,width,position:"relative",userSelect:"none"}}>
+      {children}
+      <span onMouseDown={onMouseDown} style={{position:"absolute",right:0,top:0,bottom:0,width:6,cursor:"col-resize",zIndex:1}}/>
+    </th>
+  );
+}
+
 function MiniBarChart({ data, valueKey, color, formatLabel }) {
   const max = Math.max(1, ...data.map(d => d[valueKey]));
   return (
@@ -3419,7 +3484,7 @@ export default function App() {
   const allNav=[
     {id:"dashboard",label:"Dashboard",icon:"",roles:["ADMIN","MANAGER","HR","CEO"]},
     {id:"hireflow",label:"Hire Flow",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"hireflow-settings",label:"Hire Flow Settings",icon:"",roles:["ADMIN","MANAGER"]},
+    {id:"hireflow-settings",label:"Settings",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"campaigns",label:"IVR Campaigns",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"leads",label:"Leads",icon:"",roles:["ADMIN","MANAGER","HR"]},
     {id:"interested",label:"IVR Interested Candidates",icon:"",roles:["ADMIN","MANAGER","HR"]},
