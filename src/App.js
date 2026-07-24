@@ -449,12 +449,18 @@ function Dashboard({ showToast, role }) {
   const [dateTo,setDateTo]=useState("");
   const [campaignFilter,setCampaignFilter]=useState("");
   const [campaignList,setCampaignList]=useState([]);
+  const [callLogsRaw,setCallLogsRaw]=useState([]);
+  const [ivrView,setIvrView]=useState("day");
   const [hfSummary,setHfSummary]=useState(null);
   const [hfUsers,setHfUsers]=useState([]);
   const [hfDateFrom,setHfDateFrom]=useState("");
   const [hfDateTo,setHfDateTo]=useState("");
   const [hfAssignedTo,setHfAssignedTo]=useState("");
   const [hfAssignedInit,setHfAssignedInit]=useState(false);
+  const [hfView,setHfView]=useState("day");
+  const [hfAttemptEvents,setHfAttemptEvents]=useState([]);
+  const [hfHireEvents,setHfHireEvents]=useState([]);
+  const [hfRecruiterStats,setHfRecruiterStats]=useState([]);
 
   const hfMyUserId=hfUsers.find(u=>u.email===getEmail())?.id;
   const hfReporteeIds=hfUsers.filter(u=>u.manager_id===hfMyUserId).map(u=>u.id);
@@ -480,15 +486,24 @@ function Dashboard({ showToast, role }) {
 
   async function loadHireFlowSummary(){
     try{
-      const [cands,stages]=await Promise.all([
-        dbSelect("candidates","?select=current_stage_id,assigned_to,assigned_at"),
+      const [cands,stages,activity]=await Promise.all([
+        dbSelect("candidates","?select=id,current_stage_id,assigned_to,assigned_at"),
         dbSelect("funnel_stages","?select=id,name"),
+        dbSelect("candidate_activity","?select=candidate_id,type,to_stage_id,changed_at&type=in.(CALL_ATTEMPT,STAGE_CHANGE)"),
       ]);
       const stageName=Object.fromEntries(stages.map(s=>[s.id,s.name]));
-      const scoped=cands.filter(c=>{
-        if(role==="HR"&&c.assigned_to!==hfMyUserId)return false;
+      const hiredId=stages.find(s=>s.name==="Hired")?.id;
+      const interviewId=stages.find(s=>s.name==="Interview Scheduled")?.id;
+
+      const ownerScoped=cands.filter(c=>{
+        if(role==="HR")return c.assigned_to===hfMyUserId;
         if(role==="MANAGER"&&!(hfReporteeIds.includes(c.assigned_to)||c.assigned_to===hfMyUserId))return false;
         if(hfAssignedTo&&c.assigned_to!==hfAssignedTo)return false;
+        return true;
+      });
+      const ownerScopedIds=new Set(ownerScoped.map(c=>c.id));
+
+      const scoped=ownerScoped.filter(c=>{
         if(!hfDateFrom&&!hfDateTo)return true;
         if(!c.assigned_at)return false;
         const d=new Date(c.assigned_at).toISOString().split("T")[0];
@@ -501,7 +516,35 @@ function Dashboard({ showToast, role }) {
       const rejected=scoped.filter(c=>stageName[c.current_stage_id]==="Rejected").length;
       const notInterested=scoped.filter(c=>stageName[c.current_stage_id]==="Not Interested").length;
       const inPipeline=total-hired-rejected-notInterested;
-      setHfSummary({total,hired,rejected,notInterested,inPipeline,conversion:total?Math.round((hired/total)*100):0});
+
+      const inRange=iso=>{
+        if(!hfDateFrom&&!hfDateTo)return true;
+        const d=new Date(iso).toISOString().split("T")[0];
+        if(hfDateFrom&&d<hfDateFrom)return false;
+        if(hfDateTo&&d>hfDateTo)return false;
+        return true;
+      };
+      const scopedActivity=activity.filter(a=>ownerScopedIds.has(a.candidate_id)&&inRange(a.changed_at));
+      const attemptEvents=scopedActivity.filter(a=>a.type==="CALL_ATTEMPT");
+      const interviewEvents=interviewId?scopedActivity.filter(a=>a.type==="STAGE_CHANGE"&&a.to_stage_id===interviewId):[];
+      const hireEventsInRange=hiredId?scopedActivity.filter(a=>a.type==="STAGE_CHANGE"&&a.to_stage_id===hiredId):[];
+      setHfAttemptEvents(attemptEvents);
+      setHfHireEvents(hireEventsInRange);
+
+      setHfSummary({total,hired,rejected,notInterested,inPipeline,conversion:total?Math.round((hired/total)*100):0,attempted:attemptEvents.length,interviews:interviewEvents.length});
+
+      if(["ADMIN","MANAGER","CEO"].includes(role)){
+        const hireCountByCandidate={};
+        hireEventsInRange.forEach(h=>{hireCountByCandidate[h.candidate_id]=(hireCountByCandidate[h.candidate_id]||0)+1;});
+        const stats=hfUsers.filter(u=>["HR","MANAGER"].includes(u.role)).map(u=>{
+          const totalAssigned=cands.filter(c=>c.assigned_to===u.id).length;
+          const hiredCount=cands.filter(c=>c.assigned_to===u.id&&hireCountByCandidate[c.id]).length;
+          return {id:u.id,name:u.name||u.email,totalAssigned,hired:hiredCount};
+        }).filter(r=>r.totalAssigned>0||r.hired>0).sort((a,b)=>b.hired-a.hired||b.totalAssigned-a.totalAssigned);
+        setHfRecruiterStats(stats);
+      }else{
+        setHfRecruiterStats([]);
+      }
     }catch(e){}
   }
 
@@ -523,6 +566,7 @@ function Dashboard({ showToast, role }) {
         pending:leads.filter(l=>["PENDING","CALLED"].includes(l.status)).length,
         byDisp,
       });
+      setCallLogsRaw(logs);
     }catch(e){}
   }
   async function loadDialerStatus(){try{setDialerStatus(await renderFetch("/campaign/status"));}catch{}}
@@ -540,9 +584,67 @@ function Dashboard({ showToast, role }) {
   const connRate=stats?.total?Math.round(((stats.total-stats.notConnected)/stats.total)*100):0;
   const isActive=dialerStatus?.dialer?.is_active;
 
+  function hfDayKey(iso){return new Date(iso).toISOString().split("T")[0];}
+  function hfWeekKey(iso){
+    const d=new Date(iso);
+    const dow=(d.getUTCDay()+6)%7;
+    const monday=new Date(d);monday.setUTCDate(d.getUTCDate()-dow);
+    return monday.toISOString().split("T")[0];
+  }
+  const hfKeyFn=hfView==="day"?hfDayKey:hfWeekKey;
+  const hfBuckets=(()=>{
+    let from=hfDateFrom,to=hfDateTo;
+    if(!from||!to){
+      const t=new Date();to=t.toISOString().split("T")[0];
+      const f=new Date();f.setDate(t.getDate()-(hfView==="day"?13:55));from=f.toISOString().split("T")[0];
+    }
+    const keys=[];
+    if(hfView==="day"){
+      let cur=new Date(from+"T00:00:00Z");const end=new Date(to+"T00:00:00Z");
+      while(cur<=end&&keys.length<90){keys.push(cur.toISOString().split("T")[0]);cur.setUTCDate(cur.getUTCDate()+1);}
+    }else{
+      let cur=new Date(hfWeekKey(from+"T00:00:00Z")+"T00:00:00Z");const end=new Date(hfWeekKey(to+"T00:00:00Z")+"T00:00:00Z");
+      while(cur<=end&&keys.length<60){keys.push(cur.toISOString().split("T")[0]);cur.setUTCDate(cur.getUTCDate()+7);}
+    }
+    const attemptMap={},hireMap={};
+    hfAttemptEvents.forEach(a=>{const k=hfKeyFn(a.changed_at);attemptMap[k]=(attemptMap[k]||0)+1;});
+    hfHireEvents.forEach(h=>{const k=hfKeyFn(h.changed_at);hireMap[k]=(hireMap[k]||0)+1;});
+    return keys.map(k=>({key:k,attempted:attemptMap[k]||0,hires:hireMap[k]||0}));
+  })();
+  function hfFormatLabel(k){
+    return hfView==="day"
+      ?new Date(k+"T00:00:00Z").toLocaleDateString("en-IN",{day:"2-digit",month:"short"})
+      :"Wk "+new Date(k+"T00:00:00Z").toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
+  }
+
+  const ivrKeyFn=ivrView==="day"?hfDayKey:hfWeekKey;
+  const ivrBuckets=(()=>{
+    let from=dateFrom,to=dateTo;
+    if(!from||!to){
+      const t=new Date();to=t.toISOString().split("T")[0];
+      const f=new Date();f.setDate(t.getDate()-(ivrView==="day"?13:55));from=f.toISOString().split("T")[0];
+    }
+    const keys=[];
+    if(ivrView==="day"){
+      let cur=new Date(from+"T00:00:00Z");const end=new Date(to+"T00:00:00Z");
+      while(cur<=end&&keys.length<90){keys.push(cur.toISOString().split("T")[0]);cur.setUTCDate(cur.getUTCDate()+1);}
+    }else{
+      let cur=new Date(hfWeekKey(from+"T00:00:00Z")+"T00:00:00Z");const end=new Date(hfWeekKey(to+"T00:00:00Z")+"T00:00:00Z");
+      while(cur<=end&&keys.length<60){keys.push(cur.toISOString().split("T")[0]);cur.setUTCDate(cur.getUTCDate()+7);}
+    }
+    const callMap={},interestedMap={};
+    callLogsRaw.forEach(l=>{const k=ivrKeyFn(l.logged_at);callMap[k]=(callMap[k]||0)+1;if(l.sub_disposition==="INTERESTED")interestedMap[k]=(interestedMap[k]||0)+1;});
+    return keys.map(k=>({key:k,calls:callMap[k]||0,interested:interestedMap[k]||0}));
+  })();
+  function ivrFormatLabel(k){
+    return ivrView==="day"
+      ?new Date(k+"T00:00:00Z").toLocaleDateString("en-IN",{day:"2-digit",month:"short"})
+      :"Wk "+new Date(k+"T00:00:00Z").toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
+  }
+
   return(
     <div>
-      <div className="page-header" style={{position:"static"}}>
+      <div className="page-header">
         <div><div className="page-title">Dashboard</div><div className="page-sub">Live overview</div></div>
         <button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button>
       </div>
@@ -566,9 +668,12 @@ function Dashboard({ showToast, role }) {
                 )}
                 {(hfDateFrom||hfDateTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setHfDateFrom("");setHfDateTo("");}}>All Time</button>}
                 <button className="btn btn-sm btn-ghost" onClick={()=>{setHfDateFrom(today());setHfDateTo(today());}}>Today</button>
+                <span style={{width:1,height:20,background:T.border,margin:"0 2px"}}/>
+                <button className={`btn btn-sm ${hfView==="day"?"":"btn-ghost"}`} onClick={()=>setHfView("day")}>Day-wise</button>
+                <button className={`btn btn-sm ${hfView==="week"?"":"btn-ghost"}`} onClick={()=>setHfView("week")}>Week-wise</button>
               </div>
             </div>
-            <div className="card">
+            <div className="card" style={{marginBottom:16}}>
               <div className="card-body" style={{padding:"12px 20px"}}>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10}}>
                   <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
@@ -578,6 +683,14 @@ function Dashboard({ showToast, role }) {
                   <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
                     <div style={{fontSize:11,color:T.muted,marginBottom:4}}>In Pipeline</div>
                     <div style={{fontSize:20,fontWeight:700}}>{hfSummary.inPipeline}</div>
+                  </div>
+                  <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Attempted</div>
+                    <div style={{fontSize:20,fontWeight:700,color:T.accent}}>{hfSummary.attempted}</div>
+                  </div>
+                  <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Interview Scheduled</div>
+                    <div style={{fontSize:20,fontWeight:700,color:T.amber}}>{hfSummary.interviews}</div>
                   </div>
                   <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
                     <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Hired</div>
@@ -598,6 +711,36 @@ function Dashboard({ showToast, role }) {
                 </div>
               </div>
             </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:16,marginBottom:16}}>
+              <div className="card">
+                <div className="card-header"><div className="card-title">Attempted Trend</div></div>
+                <div className="card-body"><MiniBarChart data={hfBuckets} valueKey="attempted" color={T.accent} formatLabel={hfFormatLabel}/></div>
+              </div>
+              <div className="card">
+                <div className="card-header"><div className="card-title">Hiring Trend</div></div>
+                <div className="card-body"><MiniBarChart data={hfBuckets} valueKey="hires" color={T.green} formatLabel={hfFormatLabel}/></div>
+              </div>
+            </div>
+
+            {["ADMIN","MANAGER","CEO"].includes(role)&&hfRecruiterStats.length>0&&(
+              <div className="card">
+                <div className="card-header"><div className="card-title">HR Performance</div><span style={{fontSize:12,color:T.muted}}>Hired is for the selected range; Assigned is current total</span></div>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Recruiter</th><th>Assigned</th><th>Hired</th><th>Conversion</th></tr></thead>
+                    <tbody>{hfRecruiterStats.map(r=>(
+                      <tr key={r.id}>
+                        <td style={{fontWeight:500}}>{r.name}</td>
+                        <td>{r.totalAssigned}</td>
+                        <td style={{color:r.hired?T.green:undefined,fontWeight:r.hired?600:undefined}}>{r.hired}</td>
+                        <td>{r.totalAssigned?Math.round((r.hired/r.totalAssigned)*1000)/10:0}%</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -615,6 +758,9 @@ function Dashboard({ showToast, role }) {
               {campaignList.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
             </select>
             {(dateFrom||dateTo||campaignFilter)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setDateFrom("");setDateTo("");setCampaignFilter("");}}>✕ Clear</button>}
+            <span style={{width:1,height:20,background:T.border,margin:"0 2px"}}/>
+            <button className={`btn btn-sm ${ivrView==="day"?"":"btn-ghost"}`} onClick={()=>setIvrView("day")}>Day-wise</button>
+            <button className={`btn btn-sm ${ivrView==="week"?"":"btn-ghost"}`} onClick={()=>setIvrView("week")}>Week-wise</button>
           </div>
         </div>
 
@@ -639,9 +785,20 @@ function Dashboard({ showToast, role }) {
         {/* KPIs */}
         <div className="kpi-grid">
           <div className="kpi-card"><div className="kpi-label">Total Calls</div><div className="kpi-value blue">{stats?.total??0}</div><div className="kpi-sub">{dateFrom||dateTo?"Filtered period":"All time"}</div></div>
-          <div className="kpi-card"><div className="kpi-label">Interested</div><div className="kpi-value green">{stats?.interested??0}</div><div className="kpi-sub">{stats?.total?`${Math.round(((stats.interested||0)/stats.total)*100)}% conversion`:""}</div></div>
+          <div className="kpi-card"><div className="kpi-label">Interested Cases</div><div className="kpi-value green">{stats?.interested??0}</div><div className="kpi-sub">{stats?.total?`${Math.round(((stats.interested||0)/stats.total)*100)}% of calls`:""}</div></div>
           <div className="kpi-card"><div className="kpi-label">Not Connected</div><div className="kpi-value red">{stats?.notConnected??0}</div><div className="kpi-sub">Busy + Failed</div></div>
           <div className="kpi-card"><div className="kpi-label">Pending Leads</div><div className="kpi-value amber">{stats?.pending??0}</div><div className="kpi-sub">Awaiting next dial</div></div>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:16,marginBottom:16}}>
+          <div className="card">
+            <div className="card-header"><div className="card-title">Calling Trend</div></div>
+            <div className="card-body"><MiniBarChart data={ivrBuckets} valueKey="calls" color={T.accent} formatLabel={ivrFormatLabel}/></div>
+          </div>
+          <div className="card">
+            <div className="card-header"><div className="card-title">Interested Cases Trend</div></div>
+            <div className="card-body"><MiniBarChart data={ivrBuckets} valueKey="interested" color={T.green} formatLabel={ivrFormatLabel}/></div>
+          </div>
         </div>
 
         {/* Disposition Breakdown */}
@@ -1971,13 +2128,20 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
   const [rejectionReasonId,setRejectionReasonId]=useState("");
   const [interviewAt,setInterviewAt]=useState("");
   const [attemptRemark,setAttemptRemark]=useState("");
-  const [reassignTo,setReassignTo]=useState(candidate.assigned_to||"");
+  const [reassignTo,setReassignTo]=useState("");
+  const [handoffNote,setHandoffNote]=useState("");
   const [sendingToIvr,setSendingToIvr]=useState(false);
   const [busy,setBusy]=useState(false);
 
   const stageMap=Object.fromEntries(funnelStages.map(s=>[s.id,s]));
   const userMap=Object.fromEntries(users.map(u=>[u.id,u]));
   const myUserId=users.find(u=>u.email===getEmail())?.id;
+  const role=getRole();
+  const canDirectReassign=["ADMIN","MANAGER"].includes(role);
+  const assignableUsers=users.filter(u=>["HR","MANAGER"].includes(u.role));
+  const hasPendingRequest=!!candidate.pending_reassign_to;
+  const isPendingForMe=candidate.pending_reassign_to===myUserId;
+  const isMyOwnPendingRequest=hasPendingRequest&&candidate.assigned_to===myUserId;
   const newStageIsRejected=stageMap[newStage]?.name==="Rejected";
   const newStageIsNotInterested=stageMap[newStage]?.name==="Not Interested";
   const newStageIsInterview=stageMap[newStage]?.name==="Interview Scheduled";
@@ -2044,17 +2208,75 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
   }
 
   async function reassign(){
+    if(!canDirectReassign){showToast("Only Admin/Manager can reassign directly","error");return;}
     if(!reassignTo||reassignTo===candidate.assigned_to){showToast("Pick a different recruiter first","error");return;}
     setBusy(true);
     try{
-      await dbUpdate("candidates",`id=eq.${candidate.id}`,{assigned_to:reassignTo,assigned_at:new Date().toISOString(),updated_at:new Date().toISOString()});
+      await dbUpdate("candidates",`id=eq.${candidate.id}`,{assigned_to:reassignTo,assigned_at:new Date().toISOString(),pending_reassign_to:null,pending_reassign_note:null,updated_at:new Date().toISOString()});
       await dbInsert("candidate_activity",{
         candidate_id:candidate.id,type:"REASSIGNMENT",is_contact_attempt:false,
         remark:`Reassigned to ${userMap[reassignTo]?.name||userMap[reassignTo]?.email||"—"}`,changed_by:myUserId,
       });
-      showToast("Reassigned","success");
+      showToast("Reassigned","success");setReassignTo("");
       onChanged();loadActivity();
     }catch{showToast("Failed to reassign","error");}
+    finally{setBusy(false);}
+  }
+
+  async function requestHandoff(){
+    if(!reassignTo){showToast("Pick a recruiter to hand off to","error");return;}
+    setBusy(true);
+    try{
+      await dbUpdate("candidates",`id=eq.${candidate.id}`,{pending_reassign_to:reassignTo,pending_reassign_note:handoffNote.trim()||null,updated_at:new Date().toISOString()});
+      await dbInsert("candidate_activity",{
+        candidate_id:candidate.id,type:"REASSIGN_REQUESTED",is_contact_attempt:false,
+        remark:`Handoff requested to ${userMap[reassignTo]?.name||userMap[reassignTo]?.email||"—"}${handoffNote.trim()?`: ${handoffNote.trim()}`:""}`,changed_by:myUserId,
+      });
+      showToast("Handoff requested — waiting for them to accept","success");setReassignTo("");setHandoffNote("");
+      onChanged();loadActivity();
+    }catch{showToast("Failed to request handoff","error");}
+    finally{setBusy(false);}
+  }
+
+  async function acceptHandoff(){
+    setBusy(true);
+    try{
+      await dbUpdate("candidates",`id=eq.${candidate.id}`,{assigned_to:myUserId,assigned_at:new Date().toISOString(),pending_reassign_to:null,pending_reassign_note:null,updated_at:new Date().toISOString()});
+      await dbInsert("candidate_activity",{
+        candidate_id:candidate.id,type:"REASSIGNMENT",is_contact_attempt:false,
+        remark:`Handoff accepted by ${userMap[myUserId]?.name||userMap[myUserId]?.email||"—"}`,changed_by:myUserId,
+      });
+      showToast("Case accepted","success");
+      onChanged();loadActivity();
+    }catch{showToast("Failed to accept","error");}
+    finally{setBusy(false);}
+  }
+
+  async function rejectHandoff(){
+    setBusy(true);
+    try{
+      await dbUpdate("candidates",`id=eq.${candidate.id}`,{pending_reassign_to:null,pending_reassign_note:null,updated_at:new Date().toISOString()});
+      await dbInsert("candidate_activity",{
+        candidate_id:candidate.id,type:"REASSIGN_REJECTED",is_contact_attempt:false,
+        remark:`Handoff declined by ${userMap[myUserId]?.name||userMap[myUserId]?.email||"—"}`,changed_by:myUserId,
+      });
+      showToast("Handoff declined","info");
+      onChanged();loadActivity();
+    }catch{showToast("Failed to decline","error");}
+    finally{setBusy(false);}
+  }
+
+  async function cancelHandoff(){
+    setBusy(true);
+    try{
+      await dbUpdate("candidates",`id=eq.${candidate.id}`,{pending_reassign_to:null,pending_reassign_note:null,updated_at:new Date().toISOString()});
+      await dbInsert("candidate_activity",{
+        candidate_id:candidate.id,type:"NOTE",is_contact_attempt:false,
+        remark:"Handoff request cancelled",changed_by:myUserId,
+      });
+      showToast("Request cancelled","info");
+      onChanged();loadActivity();
+    }catch{showToast("Failed to cancel","error");}
     finally{setBusy(false);}
   }
 
@@ -2118,14 +2340,52 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
       <div className="card" style={{marginBottom:16}}>
         <div className="card-header"><div className="card-title">Assignment</div></div>
         <div className="card-body">
-          <div className="two-col" style={{marginBottom:8}}>
-            <div className="field" style={{marginBottom:0}}><label>Assigned To</label>
-              <select value={reassignTo} onChange={e=>setReassignTo(e.target.value)}>
-                <option value="">— Unassigned —</option>{users.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
-              </select>
+          <div style={{marginBottom:12,fontSize:13}}>Currently: <strong>{userMap[candidate.assigned_to]?.name||userMap[candidate.assigned_to]?.email||"Unassigned"}</strong></div>
+
+          {hasPendingRequest&&(
+            <div className="info-box amber" style={{marginBottom:12}}>
+              {isPendingForMe?(
+                <>
+                  <div style={{marginBottom:8}}>{userMap[candidate.assigned_to]?.name||userMap[candidate.assigned_to]?.email||"—"} wants to hand this case to you{candidate.pending_reassign_note?`: "${candidate.pending_reassign_note}"`:""}.</div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button className="btn btn-sm btn-green" onClick={acceptHandoff} disabled={busy}>Accept</button>
+                    <button className="btn btn-sm btn-ghost" onClick={rejectHandoff} disabled={busy}>Decline</button>
+                  </div>
+                </>
+              ):isMyOwnPendingRequest?(
+                <>
+                  <div style={{marginBottom:8}}>Handoff requested to {userMap[candidate.pending_reassign_to]?.name||userMap[candidate.pending_reassign_to]?.email||"—"} — waiting for them to accept.</div>
+                  <button className="btn btn-sm btn-ghost" onClick={cancelHandoff} disabled={busy}>Cancel Request</button>
+                </>
+              ):(
+                <div>Handoff pending: {userMap[candidate.assigned_to]?.name||"—"} → {userMap[candidate.pending_reassign_to]?.name||"—"}</div>
+              )}
             </div>
-            <button className="btn btn-sm" onClick={reassign} disabled={busy} style={{alignSelf:"flex-end"}}>Reassign</button>
-          </div>
+          )}
+
+          {canDirectReassign?(
+            <div className="two-col" style={{marginBottom:8}}>
+              <div className="field" style={{marginBottom:0}}><label>Reassign To</label>
+                <select value={reassignTo} onChange={e=>setReassignTo(e.target.value)}>
+                  <option value="">— Unassigned —</option>{assignableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+                </select>
+              </div>
+              <button className="btn btn-sm" onClick={reassign} disabled={busy} style={{alignSelf:"flex-end"}}>Reassign</button>
+            </div>
+          ):(!hasPendingRequest&&candidate.assigned_to===myUserId&&(
+            <div style={{marginBottom:8}}>
+              <div className="two-col" style={{marginBottom:8}}>
+                <div className="field" style={{marginBottom:0}}><label>Hand Off To</label>
+                  <select value={reassignTo} onChange={e=>setReassignTo(e.target.value)}>
+                    <option value="">— Pick a recruiter —</option>{assignableUsers.filter(u=>u.id!==myUserId).map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+                  </select>
+                </div>
+                <button className="btn btn-sm" onClick={requestHandoff} disabled={busy||!reassignTo} style={{alignSelf:"flex-end"}}>Request Handoff</button>
+              </div>
+              <input value={handoffNote} onChange={e=>setHandoffNote(e.target.value)} placeholder="Optional note for them"/>
+            </div>
+          ))}
+
           <button className="btn btn-sm btn-amber" onClick={sendToIvr} disabled={sendingToIvr}>{sendingToIvr?"Scheduling...":"Send to IVR (didn't pick up)"}</button>
         </div>
       </div>
@@ -2218,6 +2478,11 @@ function HireFlowCandidates({ showToast }) {
   const [stageFilter,setStageFilter]=useState("ALL");
   const [processFilter,setProcessFilter]=useState("ALL");
   const [scopeFilter,setScopeFilter]=useState(getRole()==="HR"?"MINE":"ALL");
+  const [assigneeFilter,setAssigneeFilter]=useState("");
+  const [filterFrom,setFilterFrom]=useState("");
+  const [filterTo,setFilterTo]=useState("");
+  const [page,setPage]=useState(1);
+  const pageSize=25;
   const [selected,setSelected]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
   const [addForm,setAddForm]=useState({name:"",phone:"",process_id:"",position_type_id:"",source_id:"",assigned_to:"",languages_spoken:""});
@@ -2245,6 +2510,7 @@ function HireFlowCandidates({ showToast }) {
       setDashRecruiter(myUserId);setDashRecruiterInit(true);
     }
   },[myUserId,role,dashRecruiterInit]);
+  useEffect(()=>{setPage(1);},[search,stageFilter,processFilter,scopeFilter,assigneeFilter,filterFrom,filterTo]);
 
   async function loadAll(){
     setLoading(true);
@@ -2257,15 +2523,14 @@ function HireFlowCandidates({ showToast }) {
         dbSelect("rejection_reasons","?select=*&order=name"),
         dbSelect("funnel_stages","?select=*&order=sort_order"),
         dbSelect("user_roles","?select=id,name,email,role,manager_id"),
-        dbSelect("candidate_activity","?select=candidate_id,is_contact_attempt,changed_at&order=changed_at.desc"),
+        dbSelect("candidate_activity","?select=candidate_id,is_contact_attempt,changed_at,remark&order=changed_at.desc"),
       ]);
       setCandidates(cands);setProcesses(procs);setPositionTypes(posTypes);setLeadSources(sources);setRejectionReasons(reasons);setFunnelStages(stages);setUsers(userList);
 
       const summary={};
       activity.forEach(a=>{
-        if(!summary[a.candidate_id])summary[a.candidate_id]={count:0,last:a.changed_at};
+        if(!summary[a.candidate_id])summary[a.candidate_id]={count:0,last:a.changed_at,lastRemark:a.remark||null};
         if(a.is_contact_attempt)summary[a.candidate_id].count+=1;
-        if(a.changed_at>summary[a.candidate_id].last)summary[a.candidate_id].last=a.changed_at;
       });
       setActivitySummary(summary);
     }catch(e){showToast("Failed to load candidates","error");}
@@ -2276,6 +2541,8 @@ function HireFlowCandidates({ showToast }) {
   const positionMap=Object.fromEntries(positionTypes.map(p=>[p.id,p.name]));
   const stageMap=Object.fromEntries(funnelStages.map(s=>[s.id,s]));
   const userMap=Object.fromEntries(users.map(u=>[u.id,u]));
+  // Candidates can only ever be owned by HR/Manager — Admin and CEO don't work cases.
+  const assignableUsers=users.filter(u=>["HR","MANAGER"].includes(u.role));
 
   function isStale(c){
     const last=activitySummary[c.id]?.last||c.updated_at||c.created_at;
@@ -2292,8 +2559,19 @@ function HireFlowCandidates({ showToast }) {
     if(processFilter!=="ALL"&&c.process_id!==processFilter)return false;
     if(scopeFilter==="MINE"&&c.assigned_to!==myUserId)return false;
     if(scopeFilter==="TEAM"&&!reporteeIds.includes(c.assigned_to)&&c.assigned_to!==myUserId)return false;
+    if(assigneeFilter&&c.assigned_to!==assigneeFilter)return false;
+    if((filterFrom||filterTo)&&c.assigned_at){
+      const d=new Date(c.assigned_at).toISOString().split("T")[0];
+      if(filterFrom&&d<filterFrom)return false;
+      if(filterTo&&d>filterTo)return false;
+    } else if(filterFrom||filterTo){
+      return false;
+    }
     return true;
   });
+  const totalPages=Math.max(1,Math.ceil(filtered.length/pageSize));
+  const pageSafe=Math.min(page,totalPages);
+  const paged=filtered.slice((pageSafe-1)*pageSize,pageSafe*pageSize);
 
   // ---- Dashboard ----
   const dashScoped=candidates.filter(c=>{
@@ -2469,7 +2747,7 @@ function HireFlowCandidates({ showToast }) {
                 <>
                   <div style={{position:"fixed",inset:0,zIndex:19}} onClick={()=>setShowAssigneePicker(false)}/>
                   <div className="card" style={{position:"absolute",top:"calc(100% + 6px)",left:0,zIndex:20,width:220,maxHeight:240,overflowY:"auto",padding:8,margin:0}}>
-                    {users.map(u=>(
+                    {assignableUsers.map(u=>(
                       <label key={u.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",fontSize:13,cursor:"pointer",borderRadius:6}}>
                         <input type="checkbox" checked={uploadAssignees.includes(u.id)} onChange={()=>setUploadAssignees(prev=>prev.includes(u.id)?prev.filter(x=>x!==u.id):[...prev,u.id])}/>
                         {u.name||u.email}
@@ -2563,13 +2841,22 @@ function HireFlowCandidates({ showToast }) {
               {role==="MANAGER"&&<option value="TEAM">My Team</option>}
             </select>
           )}
+          {["ADMIN","MANAGER"].includes(role)&&(
+            <select className="filter-select" value={assigneeFilter} onChange={e=>setAssigneeFilter(e.target.value)}>
+              <option value="">Any Recruiter</option>
+              {assignableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+            </select>
+          )}
+          <input type="date" className="filter-input" value={filterFrom} onChange={e=>setFilterFrom(e.target.value)} title="Assigned from date"/>
+          <input type="date" className="filter-input" value={filterTo} onChange={e=>setFilterTo(e.target.value)} title="Assigned to date"/>
+          {(filterFrom||filterTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setFilterFrom("");setFilterTo("");}}>✕ Clear Dates</button>}
         </div>
 
         {["ADMIN","MANAGER"].includes(role)&&selectedIds.length>0&&(
           <div className="card" style={{display:"flex",gap:8,alignItems:"center",padding:12,marginBottom:16}}>
             <div style={{fontSize:13,fontWeight:500}}>{selectedIds.length} selected</div>
             <select className="filter-select" value={bulkAssignTo} onChange={e=>setBulkAssignTo(e.target.value)}>
-              <option value="">Assign to…</option>{users.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+              <option value="">Assign to…</option>{assignableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
             </select>
             <button className="btn btn-sm" onClick={bulkAssign} disabled={bulkAssigning||!bulkAssignTo}>{bulkAssigning?"Assigning...":"Assign"}</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>setSelectedIds([])}>Clear</button>
@@ -2581,14 +2868,17 @@ function HireFlowCandidates({ showToast }) {
           <div className="table-wrap">
             {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No candidates found</div></div>:(
               <table>
-                <thead><tr>{["ADMIN","MANAGER"].includes(role)&&<th style={{width:32}}></th>}<th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Stage</th><th>Assigned To</th><th>Contacted</th><th>Last Activity</th></tr></thead>
-                <tbody>{filtered.map(c=>{
+                <thead><tr><th style={{width:36}}>#</th>{["ADMIN","MANAGER"].includes(role)&&<th style={{width:32}}></th>}<th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Stage</th><th>Assigned To</th><th>Contacted</th><th>Last Activity</th><th>Remarks</th></tr></thead>
+                <tbody>{paged.map((c,i)=>{
                   const stage=stageMap[c.current_stage_id];
                   const owner=userMap[c.assigned_to];
                   const summary=activitySummary[c.id];
                   const stale=isStale(c);
+                  const isOwn=["ADMIN","MANAGER"].includes(role)&&c.assigned_to===myUserId;
+                  const rowBg=stale?T.amberDim:isOwn?`${T.accent}14`:"transparent";
                   return(
-                    <tr key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer",background:stale?T.amberDim:"transparent"}}>
+                    <tr key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer",background:rowBg}}>
+                      <td style={{color:T.muted,fontSize:12}}>{(pageSafe-1)*pageSize+i+1}</td>
                       {["ADMIN","MANAGER"].includes(role)&&(
                         <td onClick={e=>e.stopPropagation()}>
                           <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={()=>toggleSelect(c.id)}/>
@@ -2600,13 +2890,16 @@ function HireFlowCandidates({ showToast }) {
                       <td>{positionMap[c.position_type_id]||"—"}</td>
                       <td><span className="badge" style={{background:stage?.is_exit_stage?`${T.purple}22`:`${T.accent}22`,color:stage?.is_exit_stage?T.purple:T.accent}}>{stage?.name||"—"}</span></td>
                       <td>
-                        {owner?(owner.name||owner.email):(
-                          <button className="btn btn-sm btn-ghost" onClick={e=>{e.stopPropagation();takeCandidate(c);}}>Take</button>
+                        {owner?(<>{owner.name||owner.email}{isOwn&&<span style={{marginLeft:6,fontSize:10,color:T.accent,fontWeight:600}}>YOU</span>}{c.pending_reassign_to&&<span style={{marginLeft:6,fontSize:10,color:T.amber,fontWeight:600}}>{c.pending_reassign_to===myUserId?"TRANSFER PENDING — YOU":"TRANSFER PENDING"}</span>}</>):(
+                          ["HR","MANAGER"].includes(role)?<button className="btn btn-sm btn-ghost" onClick={e=>{e.stopPropagation();takeCandidate(c);}}>Take</button>:"Unassigned"
                         )}
                       </td>
                       <td>{summary?.count||0}x</td>
                       <td style={{fontSize:12,color:stale?T.amber:T.muted}}>
                         {summary?.last?new Date(summary.last).toLocaleDateString("en-IN"):"Never"}{stale&&" — STALE"}
+                      </td>
+                      <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={summary?.lastRemark||""}>
+                        {summary?.lastRemark||"—"}
                       </td>
                     </tr>
                   );
@@ -2614,6 +2907,16 @@ function HireFlowCandidates({ showToast }) {
               </table>
             )}
           </div>
+          {filtered.length>0&&(
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",borderTop:`1px solid ${T.border}`,fontSize:12,color:T.muted}}>
+              <div>Showing {(pageSafe-1)*pageSize+1}–{Math.min(pageSafe*pageSize,filtered.length)} of {filtered.length}</div>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <button className="btn btn-sm btn-ghost" disabled={pageSafe<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>Prev</button>
+                <span>Page {pageSafe} of {totalPages}</span>
+                <button className="btn btn-sm btn-ghost" disabled={pageSafe>=totalPages} onClick={()=>setPage(p=>Math.min(totalPages,p+1))}>Next</button>
+              </div>
+            </div>
+          )}
         </div>
         </>)}
       </div>
@@ -2655,7 +2958,7 @@ function HireFlowCandidates({ showToast }) {
             </div>
             <div className="field"><label>Assign To</label>
               <select value={addForm.assigned_to} onChange={e=>setAddForm({...addForm,assigned_to:e.target.value})}>
-                <option value="">— Unassigned —</option>{users.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+                <option value="">— Unassigned —</option>{assignableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
               </select>
             </div>
           </div>
@@ -2686,259 +2989,6 @@ function MiniBarChart({ data, valueKey, color, formatLabel }) {
   );
 }
 
-function Reports({ showToast }) {
-  const [view, setView] = useState("day");
-  const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 13); return d.toISOString().split("T")[0]; });
-  const [dateTo, setDateTo] = useState(today());
-  const [callLogs, setCallLogs] = useState([]); // {logged_at, sub_disposition}
-  const [attemptEvents, setAttemptEvents] = useState([]); // {changed_at}
-  const [interviewEvents, setInterviewEvents] = useState([]); // {changed_at}
-  const [hireEvents, setHireEvents] = useState([]); // {candidate_id, changed_at}
-  const [candidates, setCandidates] = useState([]); // {id, assigned_to, current_stage_id, assigned_at}
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => { load(); }, [dateFrom, dateTo]);
-
-  async function load() {
-    setLoading(true);
-    try {
-      const [logs, stages, cands, userList, activity] = await Promise.all([
-        dbSelect("call_logs", `?select=logged_at,sub_disposition&logged_at=gte.${dateFrom}T00:00:00&logged_at=lte.${dateTo}T23:59:59`),
-        dbSelect("funnel_stages", "?select=id,name"),
-        dbSelect("candidates", "?select=id,assigned_to,current_stage_id,assigned_at"),
-        dbSelect("user_roles", "?select=id,name,email,role"),
-        dbSelect("candidate_activity", `?select=candidate_id,type,to_stage_id,changed_at&type=in.(CALL_ATTEMPT,STAGE_CHANGE)&changed_at=gte.${dateFrom}T00:00:00&changed_at=lte.${dateTo}T23:59:59`),
-      ]);
-      const hiredStageId = stages.find(s => s.name === "Hired")?.id;
-      const interviewStageId = stages.find(s => s.name === "Interview Scheduled")?.id;
-      setCallLogs(logs);
-      setAttemptEvents(activity.filter(a => a.type === "CALL_ATTEMPT"));
-      setInterviewEvents(interviewStageId ? activity.filter(a => a.type === "STAGE_CHANGE" && a.to_stage_id === interviewStageId) : []);
-      setHireEvents(hiredStageId ? activity.filter(a => a.type === "STAGE_CHANGE" && a.to_stage_id === hiredStageId) : []);
-      setCandidates(cands);
-      setUsers(userList);
-    } catch (e) { showToast("Failed to load reports", "error"); }
-    finally { setLoading(false); }
-  }
-
-  function dayKey(iso) { return new Date(iso).toISOString().split("T")[0]; }
-  function weekKey(iso) {
-    const d = new Date(iso);
-    const dow = (d.getUTCDay() + 6) % 7; // Monday = 0
-    const monday = new Date(d);
-    monday.setUTCDate(d.getUTCDate() - dow);
-    return monday.toISOString().split("T")[0];
-  }
-  const keyFn = view === "day" ? dayKey : weekKey;
-
-  const buckets = (() => {
-    const keys = [];
-    if (view === "day") {
-      let cur = new Date(dateFrom + "T00:00:00Z");
-      const end = new Date(dateTo + "T00:00:00Z");
-      while (cur <= end && keys.length < 90) { keys.push(cur.toISOString().split("T")[0]); cur.setUTCDate(cur.getUTCDate() + 1); }
-    } else {
-      let cur = new Date(weekKey(dateFrom + "T00:00:00Z") + "T00:00:00Z");
-      const end = new Date(weekKey(dateTo + "T00:00:00Z") + "T00:00:00Z");
-      while (cur <= end && keys.length < 60) { keys.push(cur.toISOString().split("T")[0]); cur.setUTCDate(cur.getUTCDate() + 7); }
-    }
-    const callMap = {}, interestedMap = {}, attemptMap = {}, interviewMap = {}, hireMap = {};
-    callLogs.forEach(l => { const k = keyFn(l.logged_at); callMap[k] = (callMap[k] || 0) + 1; if (l.sub_disposition === "INTERESTED") interestedMap[k] = (interestedMap[k] || 0) + 1; });
-    attemptEvents.forEach(a => { const k = keyFn(a.changed_at); attemptMap[k] = (attemptMap[k] || 0) + 1; });
-    interviewEvents.forEach(a => { const k = keyFn(a.changed_at); interviewMap[k] = (interviewMap[k] || 0) + 1; });
-    hireEvents.forEach(h => { const k = keyFn(h.changed_at); hireMap[k] = (hireMap[k] || 0) + 1; });
-    return keys.map(k => ({ key: k, calls: callMap[k] || 0, interested: interestedMap[k] || 0, attempted: attemptMap[k] || 0, interviews: interviewMap[k] || 0, hires: hireMap[k] || 0 }));
-  })();
-
-  const totalCalls = buckets.reduce((s, b) => s + b.calls, 0);
-  const totalInterested = buckets.reduce((s, b) => s + b.interested, 0);
-  const totalAttempted = buckets.reduce((s, b) => s + b.attempted, 0);
-  const totalInterviews = buckets.reduce((s, b) => s + b.interviews, 0);
-  const totalHires = buckets.reduce((s, b) => s + b.hires, 0);
-
-  const dispBreakdown = (() => {
-    const m = {};
-    callLogs.forEach(l => { if (l.sub_disposition) m[l.sub_disposition] = (m[l.sub_disposition] || 0) + 1; });
-    return [
-      ["Interested", m.INTERESTED || 0, T.green],
-      ["Not Interested", m.NOT_INTERESTED || 0, T.red],
-      ["No Response", m.NO_RESPONSE || 0, T.amber],
-      ["Invalid Input", m.INVALID_INPUT || 0, T.amber],
-      ["Busy", m.BUSY || 0, T.muted],
-      ["Failed", m.FAILED || 0, T.muted],
-    ];
-  })();
-
-  function formatDayLabel(k) { return new Date(k + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
-  function formatWeekLabel(k) { return "Wk " + new Date(k + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
-  const formatLabel = view === "day" ? formatDayLabel : formatWeekLabel;
-
-  function quickRange(days) {
-    const to = new Date();
-    const from = new Date(); from.setDate(to.getDate() - (days - 1));
-    setDateFrom(from.toISOString().split("T")[0]);
-    setDateTo(to.toISOString().split("T")[0]);
-  }
-
-  // Per-recruiter Hire Flow performance — call_logs has no recruiter/candidate
-  // attribution at all (just phone/campaign/disposition), so this is scoped
-  // to Hire Flow only, where candidates.assigned_to gives real ownership.
-  const hireCountByCandidate = {};
-  hireEvents.forEach(h => { hireCountByCandidate[h.candidate_id] = (hireCountByCandidate[h.candidate_id] || 0) + 1; });
-  const recruiterStats = users
-    .filter(u => ["HR", "MANAGER", "ADMIN"].includes(u.role))
-    .map(u => {
-      const assignedInRange = candidates.filter(c => {
-        if (c.assigned_to !== u.id || !c.assigned_at) return false;
-        const d = new Date(c.assigned_at).toISOString().split("T")[0];
-        return d >= dateFrom && d <= dateTo;
-      }).length;
-      const hired = candidates.filter(c => c.assigned_to === u.id && hireCountByCandidate[c.id]).length;
-      return { id: u.id, name: u.name || u.email, assignedInRange, hired };
-    })
-    .filter(r => r.assignedInRange > 0 || r.hired > 0)
-    .sort((a, b) => b.hired - a.hired || b.assignedInRange - a.assignedInRange);
-
-  return (
-    <div>
-      <div className="page-header">
-        <div><div className="page-title">Reports</div><div className="page-sub">Company-wide productivity tracking</div></div>
-        <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
-      </div>
-      <div className="page-content">
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 20 }}>
-          <input type="date" className="filter-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" />
-          <input type="date" className="filter-input" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" />
-          <button className="btn btn-sm btn-ghost" onClick={() => quickRange(7)}>7 Days</button>
-          <button className="btn btn-sm btn-ghost" onClick={() => quickRange(30)}>30 Days</button>
-          <button className="btn btn-sm btn-ghost" onClick={() => quickRange(90)}>90 Days</button>
-          <span style={{ width: 1, height: 20, background: T.border, margin: "0 4px" }} />
-          <button className={`btn btn-sm ${view === "day" ? "" : "btn-ghost"}`} onClick={() => setView("day")}>Day-wise</button>
-          <button className={`btn btn-sm ${view === "week" ? "" : "btn-ghost"}`} onClick={() => setView("week")}>Week-wise</button>
-        </div>
-
-        {loading ? <div className="empty-state">Loading...</div> : (
-          <>
-            {/* IVR Calling */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12, paddingBottom: 10, borderBottom: `2px solid ${T.purple}` }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: T.text }}>IVR Calling</div>
-                <div style={{ fontSize: 12, color: T.muted }}>Dialer activity — not tied to a specific recruiter</div>
-              </div>
-            </div>
-            <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))" }}>
-              <div className="kpi-card"><div className="kpi-label">Total Calls</div><div className="kpi-value blue">{totalCalls}</div><div className="kpi-sub">{dateFrom} → {dateTo}</div></div>
-              <div className="kpi-card"><div className="kpi-label">Interested Cases</div><div className="kpi-value green">{totalInterested}</div><div className="kpi-sub">{totalCalls ? Math.round((totalInterested / totalCalls) * 1000) / 10 : 0}% of calls</div></div>
-              <div className="kpi-card"><div className="kpi-label">Not Connected</div><div className="kpi-value red">{(dispBreakdown.find(d => d[0] === "Busy")?.[1] || 0) + (dispBreakdown.find(d => d[0] === "Failed")?.[1] || 0)}</div><div className="kpi-sub">Busy + Failed</div></div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 16, marginBottom: 16 }}>
-              <div className="card">
-                <div className="card-header"><div className="card-title">Calling Trend</div></div>
-                <div className="card-body"><MiniBarChart data={buckets} valueKey="calls" color={T.accent} formatLabel={formatLabel} /></div>
-              </div>
-              <div className="card">
-                <div className="card-header"><div className="card-title">Interested Cases Trend</div></div>
-                <div className="card-body"><MiniBarChart data={buckets} valueKey="interested" color={T.green} formatLabel={formatLabel} /></div>
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-header"><div className="card-title">Disposition Breakup</div><span style={{ fontSize: 12, color: T.muted }}>{totalCalls} total calls</span></div>
-              <div className="card-body" style={{ padding: "12px 20px" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-                  {dispBreakdown.map(([label, count, color]) => (
-                    <div key={label} style={{ background: T.bg, borderRadius: 8, padding: "10px 12px", border: `1px solid ${T.border}` }}>
-                      <div style={{ fontSize: 11, color: T.muted, marginBottom: 4 }}>{label}</div>
-                      <div style={{ fontSize: 20, fontWeight: 700, color }}>{count}</div>
-                      <div style={{ fontSize: 11, color: T.muted }}>{totalCalls ? Math.round((count / totalCalls) * 100) : 0}%</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Hire Flow */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 28, marginBottom: 12, paddingBottom: 10, borderBottom: `2px solid ${T.accent}` }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: T.text }}>Hire Flow</div>
-                <div style={{ fontSize: 12, color: T.muted }}>Hiring pipeline outcomes</div>
-              </div>
-            </div>
-            <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))" }}>
-              <div className="kpi-card"><div className="kpi-label">Total Attempted</div><div className="kpi-value blue">{totalAttempted}</div><div className="kpi-sub">Candidates contacted</div></div>
-              <div className="kpi-card"><div className="kpi-label">Interview Scheduled</div><div className="kpi-value amber">{totalInterviews}</div><div className="kpi-sub">{dateFrom} → {dateTo}</div></div>
-              <div className="kpi-card"><div className="kpi-label">Total Hired</div><div className="kpi-value green">{totalHires}</div><div className="kpi-sub">{totalAttempted ? Math.round((totalHires / totalAttempted) * 1000) / 10 : 0}% of attempted</div></div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 16, marginBottom: 20 }}>
-              <div className="card">
-                <div className="card-header"><div className="card-title">Attempted Trend</div></div>
-                <div className="card-body"><MiniBarChart data={buckets} valueKey="attempted" color={T.blue || T.accent} formatLabel={formatLabel} /></div>
-              </div>
-              <div className="card">
-                <div className="card-header"><div className="card-title">Hiring Trend</div></div>
-                <div className="card-body"><MiniBarChart data={buckets} valueKey="hires" color={T.green} formatLabel={formatLabel} /></div>
-              </div>
-            </div>
-
-            <div className="card" style={{ marginBottom: 20 }}>
-              <div className="card-header"><div className="card-title">HR Performance</div><span style={{ fontSize: 12, color: T.muted }}>{dateFrom} → {dateTo}</span></div>
-              <div className="table-wrap">
-                {recruiterStats.length === 0 ? (
-                  <div className="empty-state"><div className="empty-title">No activity in this range</div></div>
-                ) : (
-                  <table>
-                    <thead><tr><th>Recruiter</th><th>Assigned</th><th>Hired</th><th>Conversion</th></tr></thead>
-                    <tbody>{recruiterStats.map(r => (
-                      <tr key={r.id}>
-                        <td style={{ fontWeight: 500 }}>{r.name}</td>
-                        <td>{r.assignedInRange}</td>
-                        <td style={{ color: r.hired ? T.green : undefined, fontWeight: r.hired ? 600 : undefined }}>{r.hired}</td>
-                        <td>{r.assignedInRange ? Math.round((r.hired / r.assignedInRange) * 1000) / 10 : 0}%</td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                )}
-              </div>
-            </div>
-
-            <div className="card" style={{ marginBottom: 20 }}>
-              <div className="card-header"><div className="card-title">{view === "day" ? "Day-wise" : "Week-wise"} Calling Breakdown</div></div>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>{view === "day" ? "Date" : "Week Of"}</th><th>Calls</th><th>Interested</th></tr></thead>
-                  <tbody>{[...buckets].reverse().map(b => (
-                    <tr key={b.key}>
-                      <td>{formatLabel(b.key)}</td>
-                      <td>{b.calls}</td>
-                      <td style={{ color: b.interested ? T.green : undefined, fontWeight: b.interested ? 600 : undefined }}>{b.interested}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="card">
-              <div className="card-header"><div className="card-title">{view === "day" ? "Day-wise" : "Week-wise"} Hire Flow Breakdown</div></div>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>{view === "day" ? "Date" : "Week Of"}</th><th>Attempted</th><th>Interview Scheduled</th><th>Hired</th></tr></thead>
-                  <tbody>{[...buckets].reverse().map(b => (
-                    <tr key={b.key}>
-                      <td>{formatLabel(b.key)}</td>
-                      <td>{b.attempted}</td>
-                      <td>{b.interviews}</td>
-                      <td style={{ color: b.hires ? T.green : undefined, fontWeight: b.hires ? 600 : undefined }}>{b.hires}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // ================================================
 // MAIN APP
@@ -3072,13 +3122,13 @@ export default function App() {
   const [session,setSession]=useState(()=>{try{return JSON.parse(localStorage.getItem("sb_session"));}catch{return null;}});
   const [page,setPage]=useState(()=>{
     const saved=localStorage.getItem("sb_page");
-    return getRole()==="CEO"?"reports":(saved||"dashboard");
+    return getRole()==="CEO"?"dashboard":(saved||"dashboard");
   });
   const [toast,setToast]=useState(null);
   const [role,setRole]=useState(()=>getRole());
 
   useEffect(()=>{
-    if(role==="CEO"&&page!=="reports"){setPage("reports");localStorage.setItem("sb_page","reports");}
+    if(role==="CEO"&&page!=="dashboard"){setPage("dashboard");localStorage.setItem("sb_page","dashboard");}
   },[role]);
   const [isDark,setIsDark]=useState(()=>localStorage.getItem("theme")!=="light");
   const [isRecovery,setIsRecovery]=useState(()=>{
@@ -3132,7 +3182,7 @@ export default function App() {
   );
 
   const allNav=[
-    {id:"dashboard",label:"Dashboard",icon:"",roles:["ADMIN","MANAGER","HR"]},
+    {id:"dashboard",label:"Dashboard",icon:"",roles:["ADMIN","MANAGER","HR","CEO"]},
     {id:"hireflow",label:"Hire Flow",icon:"",roles:["ADMIN","MANAGER","HR"]},
     {id:"hireflow-settings",label:"Hire Flow Settings",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"campaigns",label:"IVR Campaigns",icon:"",roles:["ADMIN","MANAGER"]},
@@ -3143,7 +3193,6 @@ export default function App() {
     {id:"audio",label:"IVR Audio Manager",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"logs",label:"IVR Call Logs",icon:"",roles:["ADMIN","MANAGER","HR"]},
     {id:"users",label:"Users",icon:"",roles:["ADMIN"]},
-    {id:"reports",label:"Reports",icon:"",roles:["ADMIN","CEO"]},
   ];
 
   const nav=allNav.filter(n=>n.roles.includes(role));
@@ -3190,7 +3239,7 @@ export default function App() {
 
         {/* MAIN CONTENT */}
         <div className="main">
-          {page==="dashboard"&&role!=="CEO"&&<Dashboard showToast={showToast} role={role}/>}
+          {page==="dashboard"&&<Dashboard showToast={showToast} role={role}/>}
           {page==="campaigns"&&["ADMIN","MANAGER"].includes(role)&&<Campaigns showToast={showToast}/>}
           {page==="leads"&&role!=="CEO"&&<Leads showToast={showToast}/>}
           {page==="interested"&&role!=="CEO"&&<InterestedCandidates showToast={showToast}/>}
@@ -3201,7 +3250,6 @@ export default function App() {
           {page==="audio"&&["ADMIN","MANAGER"].includes(role)&&<AudioManager showToast={showToast}/>}
           {page==="logs"&&role!=="CEO"&&<CallLogs showToast={showToast}/>}
           {page==="users"&&role==="ADMIN"&&<UserManagement showToast={showToast}/>}
-          {page==="reports"&&["ADMIN","CEO"].includes(role)&&<Reports showToast={showToast}/>}
         </div>
       </div>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
