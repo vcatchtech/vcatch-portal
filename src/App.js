@@ -445,14 +445,14 @@ function Dashboard({ showToast, role }) {
   const [dialerStatus,setDialerStatus]=useState(null);
   const [testPhone,setTestPhone]=useState("");
   const [testLoading,setTestLoading]=useState(false);
-  const [dateFrom,setDateFrom]=useState(today());
-  const [dateTo,setDateTo]=useState(today());
+  const [dateFrom,setDateFrom]=useState("");
+  const [dateTo,setDateTo]=useState("");
   const [campaignFilter,setCampaignFilter]=useState("");
   const [campaignList,setCampaignList]=useState([]);
   const [hfSummary,setHfSummary]=useState(null);
   const [hfUsers,setHfUsers]=useState([]);
-  const [hfDateFrom,setHfDateFrom]=useState(today());
-  const [hfDateTo,setHfDateTo]=useState(today());
+  const [hfDateFrom,setHfDateFrom]=useState("");
+  const [hfDateTo,setHfDateTo]=useState("");
   const [hfAssignedTo,setHfAssignedTo]=useState("");
   const [hfAssignedInit,setHfAssignedInit]=useState(false);
 
@@ -489,9 +489,12 @@ function Dashboard({ showToast, role }) {
         if(role==="HR"&&c.assigned_to!==hfMyUserId)return false;
         if(role==="MANAGER"&&!(hfReporteeIds.includes(c.assigned_to)||c.assigned_to===hfMyUserId))return false;
         if(hfAssignedTo&&c.assigned_to!==hfAssignedTo)return false;
+        if(!hfDateFrom&&!hfDateTo)return true;
         if(!c.assigned_at)return false;
         const d=new Date(c.assigned_at).toISOString().split("T")[0];
-        return d>=hfDateFrom&&d<=hfDateTo;
+        if(hfDateFrom&&d<hfDateFrom)return false;
+        if(hfDateTo&&d>hfDateTo)return false;
+        return true;
       });
       const total=scoped.length;
       const hired=scoped.filter(c=>stageName[c.current_stage_id]==="Hired").length;
@@ -539,7 +542,7 @@ function Dashboard({ showToast, role }) {
 
   return(
     <div>
-      <div className="page-header">
+      <div className="page-header" style={{position:"static"}}>
         <div><div className="page-title">Dashboard</div><div className="page-sub">Live overview — {dateFrom||dateTo?"filtered":"all time"}</div></div>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           <input type="date" className="filter-input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
@@ -568,7 +571,8 @@ function Dashboard({ showToast, role }) {
                     {hfAssigneeOptions.map(u=><option key={u.id} value={u.id}>{u.id===hfMyUserId?"Me":(u.name||u.email)}</option>)}
                   </select>
                 )}
-                <button className="btn btn-sm btn-ghost" onClick={()=>{setHfDateFrom(today());setHfDateTo(today());if(hfMyUserId)setHfAssignedTo(hfMyUserId);}}>Reset</button>
+                {(hfDateFrom||hfDateTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setHfDateFrom("");setHfDateTo("");}}>All Time</button>}
+                <button className="btn btn-sm btn-ghost" onClick={()=>{setHfDateFrom(today());setHfDateTo(today());}}>Today</button>
               </div>
             </div>
             <div className="card-body" style={{padding:"12px 20px"}}>
@@ -2214,8 +2218,8 @@ function HireFlowCandidates({ showToast }) {
   const fileRef=useRef();
 
   const [pageTab,setPageTab]=useState("dashboard");
-  const [dashFrom,setDashFrom]=useState(today());
-  const [dashTo,setDashTo]=useState(today());
+  const [dashFrom,setDashFrom]=useState("");
+  const [dashTo,setDashTo]=useState("");
   const [dashRecruiter,setDashRecruiter]=useState("");
   const [dashRecruiterInit,setDashRecruiterInit]=useState(false);
   const role=getRole();
@@ -2288,9 +2292,12 @@ function HireFlowCandidates({ showToast }) {
     return true;
   });
   const dashAssignedInRange=dashScoped.filter(c=>{
+    if(!dashFrom&&!dashTo)return true;
     if(!c.assigned_at)return false;
     const d=new Date(c.assigned_at).toISOString().split("T")[0];
-    return d>=dashFrom&&d<=dashTo;
+    if(dashFrom&&d<dashFrom)return false;
+    if(dashTo&&d>dashTo)return false;
+    return true;
   });
   const dashStageBreakdown=funnelStages.map(s=>({
     stage:s,count:dashAssignedInRange.filter(c=>c.current_stage_id===s.id).length,
@@ -2483,14 +2490,15 @@ function HireFlowCandidates({ showToast }) {
                   {dashRecruiterOptions.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
                 </select>
               )}
-              <button className="btn btn-sm btn-ghost" onClick={()=>{setDashFrom(today());setDashTo(today());}}>Reset to Today</button>
+              {(dashFrom||dashTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setDashFrom("");setDashTo("");}}>All Time</button>}
+              <button className="btn btn-sm btn-ghost" onClick={()=>{setDashFrom(today());setDashTo(today());}}>Today</button>
             </div>
 
             <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))"}}>
               <div className="kpi-card">
                 <div className="kpi-label">Total Assigned</div>
                 <div className="kpi-value blue">{dashAssignedInRange.length}</div>
-                <div className="kpi-sub">{dashFrom===dashTo?dashFrom:`${dashFrom} → ${dashTo}`}</div>
+                <div className="kpi-sub">{!dashFrom&&!dashTo?"All time":dashFrom===dashTo?dashFrom:`${dashFrom} → ${dashTo}`}</div>
               </div>
               <div className="kpi-card">
                 <div className="kpi-label">Pending Interviews</div>
