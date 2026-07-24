@@ -2690,7 +2690,9 @@ function Reports({ showToast }) {
   const [view, setView] = useState("day");
   const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 13); return d.toISOString().split("T")[0]; });
   const [dateTo, setDateTo] = useState(today());
-  const [callLogs, setCallLogs] = useState([]);
+  const [callLogs, setCallLogs] = useState([]); // {logged_at, sub_disposition}
+  const [attemptEvents, setAttemptEvents] = useState([]); // {changed_at}
+  const [interviewEvents, setInterviewEvents] = useState([]); // {changed_at}
   const [hireEvents, setHireEvents] = useState([]); // {candidate_id, changed_at}
   const [candidates, setCandidates] = useState([]); // {id, assigned_to, current_stage_id, assigned_at}
   const [users, setUsers] = useState([]);
@@ -2701,19 +2703,19 @@ function Reports({ showToast }) {
   async function load() {
     setLoading(true);
     try {
-      const [logs, stages, cands, userList] = await Promise.all([
-        dbSelect("call_logs", `?select=logged_at&logged_at=gte.${dateFrom}T00:00:00&logged_at=lte.${dateTo}T23:59:59`),
+      const [logs, stages, cands, userList, activity] = await Promise.all([
+        dbSelect("call_logs", `?select=logged_at,sub_disposition&logged_at=gte.${dateFrom}T00:00:00&logged_at=lte.${dateTo}T23:59:59`),
         dbSelect("funnel_stages", "?select=id,name"),
         dbSelect("candidates", "?select=id,assigned_to,current_stage_id,assigned_at"),
         dbSelect("user_roles", "?select=id,name,email,role"),
+        dbSelect("candidate_activity", `?select=candidate_id,type,to_stage_id,changed_at&type=in.(CALL_ATTEMPT,STAGE_CHANGE)&changed_at=gte.${dateFrom}T00:00:00&changed_at=lte.${dateTo}T23:59:59`),
       ]);
-      const hiredStage = stages.find(s => s.name === "Hired");
-      let hires = [];
-      if (hiredStage) {
-        hires = await dbSelect("candidate_activity", `?select=candidate_id,changed_at&type=eq.STAGE_CHANGE&to_stage_id=eq.${hiredStage.id}&changed_at=gte.${dateFrom}T00:00:00&changed_at=lte.${dateTo}T23:59:59`);
-      }
+      const hiredStageId = stages.find(s => s.name === "Hired")?.id;
+      const interviewStageId = stages.find(s => s.name === "Interview Scheduled")?.id;
       setCallLogs(logs);
-      setHireEvents(hires);
+      setAttemptEvents(activity.filter(a => a.type === "CALL_ATTEMPT"));
+      setInterviewEvents(interviewStageId ? activity.filter(a => a.type === "STAGE_CHANGE" && a.to_stage_id === interviewStageId) : []);
+      setHireEvents(hiredStageId ? activity.filter(a => a.type === "STAGE_CHANGE" && a.to_stage_id === hiredStageId) : []);
       setCandidates(cands);
       setUsers(userList);
     } catch (e) { showToast("Failed to load reports", "error"); }
@@ -2741,14 +2743,32 @@ function Reports({ showToast }) {
       const end = new Date(weekKey(dateTo + "T00:00:00Z") + "T00:00:00Z");
       while (cur <= end && keys.length < 60) { keys.push(cur.toISOString().split("T")[0]); cur.setUTCDate(cur.getUTCDate() + 7); }
     }
-    const callMap = {}, hireMap = {};
-    callLogs.forEach(l => { const k = keyFn(l.logged_at); callMap[k] = (callMap[k] || 0) + 1; });
+    const callMap = {}, interestedMap = {}, attemptMap = {}, interviewMap = {}, hireMap = {};
+    callLogs.forEach(l => { const k = keyFn(l.logged_at); callMap[k] = (callMap[k] || 0) + 1; if (l.sub_disposition === "INTERESTED") interestedMap[k] = (interestedMap[k] || 0) + 1; });
+    attemptEvents.forEach(a => { const k = keyFn(a.changed_at); attemptMap[k] = (attemptMap[k] || 0) + 1; });
+    interviewEvents.forEach(a => { const k = keyFn(a.changed_at); interviewMap[k] = (interviewMap[k] || 0) + 1; });
     hireEvents.forEach(h => { const k = keyFn(h.changed_at); hireMap[k] = (hireMap[k] || 0) + 1; });
-    return keys.map(k => ({ key: k, calls: callMap[k] || 0, hires: hireMap[k] || 0 }));
+    return keys.map(k => ({ key: k, calls: callMap[k] || 0, interested: interestedMap[k] || 0, attempted: attemptMap[k] || 0, interviews: interviewMap[k] || 0, hires: hireMap[k] || 0 }));
   })();
 
   const totalCalls = buckets.reduce((s, b) => s + b.calls, 0);
+  const totalInterested = buckets.reduce((s, b) => s + b.interested, 0);
+  const totalAttempted = buckets.reduce((s, b) => s + b.attempted, 0);
+  const totalInterviews = buckets.reduce((s, b) => s + b.interviews, 0);
   const totalHires = buckets.reduce((s, b) => s + b.hires, 0);
+
+  const dispBreakdown = (() => {
+    const m = {};
+    callLogs.forEach(l => { if (l.sub_disposition) m[l.sub_disposition] = (m[l.sub_disposition] || 0) + 1; });
+    return [
+      ["Interested", m.INTERESTED || 0, T.green],
+      ["Not Interested", m.NOT_INTERESTED || 0, T.red],
+      ["No Response", m.NO_RESPONSE || 0, T.amber],
+      ["Invalid Input", m.INVALID_INPUT || 0, T.amber],
+      ["Busy", m.BUSY || 0, T.muted],
+      ["Failed", m.FAILED || 0, T.muted],
+    ];
+  })();
 
   function formatDayLabel(k) { return new Date(k + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
   function formatWeekLabel(k) { return "Wk " + new Date(k + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
@@ -2809,10 +2829,32 @@ function Reports({ showToast }) {
             </div>
             <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))" }}>
               <div className="kpi-card"><div className="kpi-label">Total Calls</div><div className="kpi-value blue">{totalCalls}</div><div className="kpi-sub">{dateFrom} → {dateTo}</div></div>
+              <div className="kpi-card"><div className="kpi-label">Interested Cases</div><div className="kpi-value green">{totalInterested}</div><div className="kpi-sub">{totalCalls ? Math.round((totalInterested / totalCalls) * 1000) / 10 : 0}% of calls</div></div>
+              <div className="kpi-card"><div className="kpi-label">Not Connected</div><div className="kpi-value red">{(dispBreakdown.find(d => d[0] === "Busy")?.[1] || 0) + (dispBreakdown.find(d => d[0] === "Failed")?.[1] || 0)}</div><div className="kpi-sub">Busy + Failed</div></div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 16, marginBottom: 16 }}>
+              <div className="card">
+                <div className="card-header"><div className="card-title">Calling Trend</div></div>
+                <div className="card-body"><MiniBarChart data={buckets} valueKey="calls" color={T.accent} formatLabel={formatLabel} /></div>
+              </div>
+              <div className="card">
+                <div className="card-header"><div className="card-title">Interested Cases Trend</div></div>
+                <div className="card-body"><MiniBarChart data={buckets} valueKey="interested" color={T.green} formatLabel={formatLabel} /></div>
+              </div>
             </div>
             <div className="card">
-              <div className="card-header"><div className="card-title">Calling Trend</div></div>
-              <div className="card-body"><MiniBarChart data={buckets} valueKey="calls" color={T.accent} formatLabel={formatLabel} /></div>
+              <div className="card-header"><div className="card-title">Disposition Breakup</div><span style={{ fontSize: 12, color: T.muted }}>{totalCalls} total calls</span></div>
+              <div className="card-body" style={{ padding: "12px 20px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                  {dispBreakdown.map(([label, count, color]) => (
+                    <div key={label} style={{ background: T.bg, borderRadius: 8, padding: "10px 12px", border: `1px solid ${T.border}` }}>
+                      <div style={{ fontSize: 11, color: T.muted, marginBottom: 4 }}>{label}</div>
+                      <div style={{ fontSize: 20, fontWeight: 700, color }}>{count}</div>
+                      <div style={{ fontSize: 11, color: T.muted }}>{totalCalls ? Math.round((count / totalCalls) * 100) : 0}%</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
             {/* Hire Flow */}
@@ -2823,11 +2865,19 @@ function Reports({ showToast }) {
               </div>
             </div>
             <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))" }}>
-              <div className="kpi-card"><div className="kpi-label">Total Hired</div><div className="kpi-value green">{totalHires}</div><div className="kpi-sub">{dateFrom} → {dateTo}</div></div>
+              <div className="kpi-card"><div className="kpi-label">Total Attempted</div><div className="kpi-value blue">{totalAttempted}</div><div className="kpi-sub">Candidates contacted</div></div>
+              <div className="kpi-card"><div className="kpi-label">Interview Scheduled</div><div className="kpi-value amber">{totalInterviews}</div><div className="kpi-sub">{dateFrom} → {dateTo}</div></div>
+              <div className="kpi-card"><div className="kpi-label">Total Hired</div><div className="kpi-value green">{totalHires}</div><div className="kpi-sub">{totalAttempted ? Math.round((totalHires / totalAttempted) * 1000) / 10 : 0}% of attempted</div></div>
             </div>
-            <div className="card" style={{ marginBottom: 20 }}>
-              <div className="card-header"><div className="card-title">Hiring Trend</div></div>
-              <div className="card-body"><MiniBarChart data={buckets} valueKey="hires" color={T.green} formatLabel={formatLabel} /></div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 16, marginBottom: 20 }}>
+              <div className="card">
+                <div className="card-header"><div className="card-title">Attempted Trend</div></div>
+                <div className="card-body"><MiniBarChart data={buckets} valueKey="attempted" color={T.blue || T.accent} formatLabel={formatLabel} /></div>
+              </div>
+              <div className="card">
+                <div className="card-header"><div className="card-title">Hiring Trend</div></div>
+                <div className="card-body"><MiniBarChart data={buckets} valueKey="hires" color={T.green} formatLabel={formatLabel} /></div>
+              </div>
             </div>
 
             <div className="card" style={{ marginBottom: 20 }}>
@@ -2851,15 +2901,32 @@ function Reports({ showToast }) {
               </div>
             </div>
 
-            <div className="card">
-              <div className="card-header"><div className="card-title">{view === "day" ? "Day-wise" : "Week-wise"} Breakdown</div></div>
+            <div className="card" style={{ marginBottom: 20 }}>
+              <div className="card-header"><div className="card-title">{view === "day" ? "Day-wise" : "Week-wise"} Calling Breakdown</div></div>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>{view === "day" ? "Date" : "Week Of"}</th><th>Calls</th><th>Hired</th></tr></thead>
+                  <thead><tr><th>{view === "day" ? "Date" : "Week Of"}</th><th>Calls</th><th>Interested</th></tr></thead>
                   <tbody>{[...buckets].reverse().map(b => (
                     <tr key={b.key}>
                       <td>{formatLabel(b.key)}</td>
                       <td>{b.calls}</td>
+                      <td style={{ color: b.interested ? T.green : undefined, fontWeight: b.interested ? 600 : undefined }}>{b.interested}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header"><div className="card-title">{view === "day" ? "Day-wise" : "Week-wise"} Hire Flow Breakdown</div></div>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>{view === "day" ? "Date" : "Week Of"}</th><th>Attempted</th><th>Interview Scheduled</th><th>Hired</th></tr></thead>
+                  <tbody>{[...buckets].reverse().map(b => (
+                    <tr key={b.key}>
+                      <td>{formatLabel(b.key)}</td>
+                      <td>{b.attempted}</td>
+                      <td>{b.interviews}</td>
                       <td style={{ color: b.hires ? T.green : undefined, fontWeight: b.hires ? 600 : undefined }}>{b.hires}</td>
                     </tr>
                   ))}</tbody>
