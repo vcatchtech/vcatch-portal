@@ -482,12 +482,10 @@ function Dashboard({ showToast, role }) {
   useEffect(()=>{loadStats();},[dateFrom,dateTo,campaignFilter]);
   useEffect(()=>{loadHireFlowSummary();},[hfDateFrom,hfDateTo,hfAssignedTo,hfMyUserId]);
   useEffect(()=>{
-    // CEO (and, since candidates can never be assigned to Admin, Admin too)
-    // should default to the company-wide aggregate, not a "your own cases"
-    // view that would show ~nothing and can't be undone (no filter UI is
-    // shown to them). Only HR/Manager — who can actually own candidates —
-    // get the self-scoped default.
-    if(!hfAssignedInit&&hfMyUserId&&["HR","MANAGER"].includes(role)){setHfAssignedTo(hfMyUserId);setHfAssignedInit(true);}
+    // Only plain HR defaults to "just my own cases" — Manager and Admin are
+    // there to oversee everyone, so they land on the company-wide aggregate
+    // (CEO always does too, and has no filter UI to undo a self-default).
+    if(!hfAssignedInit&&hfMyUserId&&role==="HR"){setHfAssignedTo(hfMyUserId);setHfAssignedInit(true);}
   },[hfMyUserId,hfAssignedInit,role]);
 
   async function loadAll(){await Promise.all([loadStats(),loadDialerStatus(),loadHireFlowSummary()]);}
@@ -693,14 +691,6 @@ function Dashboard({ showToast, role }) {
                     <div style={{fontSize:20,fontWeight:700}}>{hfSummary.inPipeline}</div>
                   </div>
                   <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Attempted</div>
-                    <div style={{fontSize:20,fontWeight:700,color:T.accent}}>{hfSummary.attempted}</div>
-                  </div>
-                  <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
-                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Interview Scheduled</div>
-                    <div style={{fontSize:20,fontWeight:700,color:T.amber}}>{hfSummary.interviews}</div>
-                  </div>
-                  <div style={{background:T.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${T.border}`}}>
                     <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Hired</div>
                     <div style={{fontSize:20,fontWeight:700,color:T.green}}>{hfSummary.hired}</div>
                   </div>
@@ -720,15 +710,9 @@ function Dashboard({ showToast, role }) {
               </div>
             </div>
 
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:16,marginBottom:16}}>
-              <div className="card">
-                <div className="card-header"><div className="card-title">Attempted Trend</div></div>
-                <div className="card-body"><MiniBarChart data={hfBuckets} valueKey="attempted" color={T.accent} formatLabel={hfFormatLabel}/></div>
-              </div>
-              <div className="card">
-                <div className="card-header"><div className="card-title">Hiring Trend</div></div>
-                <div className="card-body"><MiniBarChart data={hfBuckets} valueKey="hires" color={T.green} formatLabel={hfFormatLabel}/></div>
-              </div>
+            <div className="card" style={{marginBottom:16}}>
+              <div className="card-header"><div className="card-title">Hiring Trend</div></div>
+              <div className="card-body"><MiniBarChart data={hfBuckets} valueKey="hires" color={T.green} formatLabel={hfFormatLabel}/></div>
             </div>
 
             {["ADMIN","MANAGER","CEO"].includes(role)&&hfRecruiterStats.length>0&&(
@@ -791,22 +775,14 @@ function Dashboard({ showToast, role }) {
         </div>
 
         {/* KPIs */}
-        <div className="kpi-grid">
+        <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))"}}>
           <div className="kpi-card"><div className="kpi-label">Total Calls</div><div className="kpi-value blue">{stats?.total??0}</div><div className="kpi-sub">{dateFrom||dateTo?"Filtered period":"All time"}</div></div>
-          <div className="kpi-card"><div className="kpi-label">Interested Cases</div><div className="kpi-value green">{stats?.interested??0}</div><div className="kpi-sub">{stats?.total?`${Math.round(((stats.interested||0)/stats.total)*100)}% of calls`:""}</div></div>
-          <div className="kpi-card"><div className="kpi-label">Not Connected</div><div className="kpi-value red">{stats?.notConnected??0}</div><div className="kpi-sub">Busy + Failed</div></div>
           <div className="kpi-card"><div className="kpi-label">Pending Leads</div><div className="kpi-value amber">{stats?.pending??0}</div><div className="kpi-sub">Awaiting next dial</div></div>
         </div>
 
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:16,marginBottom:16}}>
-          <div className="card">
-            <div className="card-header"><div className="card-title">Calling Trend</div></div>
-            <div className="card-body"><MiniBarChart data={ivrBuckets} valueKey="calls" color={T.accent} formatLabel={ivrFormatLabel}/></div>
-          </div>
-          <div className="card">
-            <div className="card-header"><div className="card-title">Interested Cases Trend</div></div>
-            <div className="card-body"><MiniBarChart data={ivrBuckets} valueKey="interested" color={T.green} formatLabel={ivrFormatLabel}/></div>
-          </div>
+        <div className="card" style={{marginBottom:16}}>
+          <div className="card-header"><div className="card-title">Calling Trend</div></div>
+          <div className="card-body"><MiniBarChart data={ivrBuckets} valueKey="calls" color={T.accent} formatLabel={ivrFormatLabel}/></div>
         </div>
 
         {/* Disposition Breakdown */}
@@ -2699,17 +2675,13 @@ function HireFlowCandidates({ showToast }) {
   const [dashFrom,setDashFrom]=useState("");
   const [dashTo,setDashTo]=useState("");
   const [dashRecruiter,setDashRecruiter]=useState("");
-  const [dashRecruiterInit,setDashRecruiterInit]=useState(false);
   const role=getRole();
   const myUserId=users.find(u=>u.email===getEmail())?.id;
   const reporteeIds=users.filter(u=>u.manager_id===myUserId).map(u=>u.id);
 
   useEffect(()=>{loadAll();},[]);
-  useEffect(()=>{
-    if(!dashRecruiterInit&&myUserId&&["ADMIN","MANAGER"].includes(role)){
-      setDashRecruiter(myUserId);setDashRecruiterInit(true);
-    }
-  },[myUserId,role,dashRecruiterInit]);
+  // Manager/Admin land on the overall view here (not a self-scoped default)
+  // — they're meant to oversee everyone, matching the main Dashboard.
   useEffect(()=>{setPage(1);},[search,stageFilter,processFilter,scopeFilter,assigneeFilter,filterFrom,filterTo]);
 
   async function loadAll(){
@@ -3068,7 +3040,7 @@ function HireFlowCandidates({ showToast }) {
           <div className="table-wrap">
             {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No candidates found</div></div>:(
               <table>
-                <thead><tr><th style={{width:36}}>#</th>{["ADMIN","MANAGER"].includes(role)&&<th style={{width:32}}></th>}<th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Stage</th><th>Assigned To</th><th>Contacted</th><th>Last Activity</th><th>Remarks</th></tr></thead>
+                <thead><tr><th style={{width:22,padding:"8px 4px"}}>#</th>{["ADMIN","MANAGER"].includes(role)&&<th style={{width:22,padding:"8px 4px"}}></th>}<th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Stage</th><th>Assigned To</th><th>Remarks</th><th style={{width:70}}>Contacted</th><th>Last Activity</th></tr></thead>
                 <tbody>{paged.map((c,i)=>{
                   const stage=stageMap[c.current_stage_id];
                   const owner=userMap[c.assigned_to];
@@ -3078,9 +3050,9 @@ function HireFlowCandidates({ showToast }) {
                   const rowBg=stale?T.amberDim:isOwn?`${T.accent}14`:"transparent";
                   return(
                     <tr key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer",background:rowBg}}>
-                      <td style={{color:T.muted,fontSize:12}}>{(pageSafe-1)*pageSize+i+1}</td>
+                      <td style={{color:T.muted,fontSize:12,padding:"6px 4px"}}>{(pageSafe-1)*pageSize+i+1}</td>
                       {["ADMIN","MANAGER"].includes(role)&&(
-                        <td onClick={e=>e.stopPropagation()}>
+                        <td style={{padding:"6px 4px"}} onClick={e=>e.stopPropagation()}>
                           <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={()=>toggleSelect(c.id)}/>
                         </td>
                       )}
@@ -3090,16 +3062,16 @@ function HireFlowCandidates({ showToast }) {
                       <td>{positionMap[c.position_type_id]||"—"}</td>
                       <td><span className="badge" style={{background:stage?.is_exit_stage?`${T.purple}22`:`${T.accent}22`,color:stage?.is_exit_stage?T.purple:T.accent}}>{stage?.name||"—"}</span></td>
                       <td>
-                        {owner?(<>{owner.name||owner.email}{isOwn&&<span style={{marginLeft:6,fontSize:10,color:T.accent,fontWeight:600}}>YOU</span>}{c.pending_reassign_to&&<span style={{marginLeft:6,fontSize:10,color:T.amber,fontWeight:600}}>{c.pending_reassign_to===myUserId?"TRANSFER PENDING — YOU":"TRANSFER PENDING"}</span>}</>):(
+                        {owner?(isOwn?"You":(<>{owner.name||owner.email}{c.pending_reassign_to&&<span style={{marginLeft:6,fontSize:10,color:T.amber,fontWeight:600}}>{c.pending_reassign_to===myUserId?"TRANSFER PENDING — YOU":"TRANSFER PENDING"}</span>}</>)):(
                           ["HR","MANAGER"].includes(role)?<button className="btn btn-sm btn-ghost" onClick={e=>{e.stopPropagation();takeCandidate(c);}}>Take</button>:"Unassigned"
                         )}
+                      </td>
+                      <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={summary?.lastRemark||""}>
+                        {summary?.lastRemark||"—"}
                       </td>
                       <td>{summary?.count||0}x</td>
                       <td style={{fontSize:12,color:stale?T.amber:T.muted}}>
                         {summary?.last?new Date(summary.last).toLocaleDateString("en-IN"):"Never"}{stale&&" — STALE"}
-                      </td>
-                      <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={summary?.lastRemark||""}>
-                        {summary?.lastRemark||"—"}
                       </td>
                     </tr>
                   );
