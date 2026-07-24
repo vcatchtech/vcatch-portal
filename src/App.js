@@ -1816,7 +1816,7 @@ function IVRQueue({ showToast }) {
 
 function HireFlowSettings({ showToast }) {
   const [tab,setTab]=useState("processes");
-  const tabs=[["processes","Processes"],["positions","Position Types"],["sources","Lead Sources"],["reasons","Rejection Reasons"],["stages","Funnel Stages"],["dialing","Dialing Settings"],["queue","IVR Queue"]];
+  const tabs=[["processes","Processes"],["positions","Position Types"],["sources","Lead Sources"],["reasons","Reasons"],["stages","Funnel Stages"],["dialing","Dialing Settings"],["queue","IVR Queue"]];
   return(
     <div>
       <div className="page-header"><div><div className="page-title">HireFlow Settings</div><div className="page-sub">Manage the lookup lists used across the hiring funnel</div></div></div>
@@ -1829,7 +1829,7 @@ function HireFlowSettings({ showToast }) {
         {tab==="processes"&&<SimpleRefList table="processes" title="Processes" placeholder="e.g. Cred, Smartcoin, ITI Finance" showToast={showToast}/>}
         {tab==="positions"&&<SimpleRefList table="position_types" title="Position Types" placeholder="e.g. Calling Executive, Field AM" showToast={showToast}/>}
         {tab==="sources"&&<SimpleRefList table="lead_sources" title="Lead Sources" placeholder="e.g. Work India, LinkedIn" showToast={showToast}/>}
-        {tab==="reasons"&&<SimpleRefList table="rejection_reasons" title="Rejection Reasons" placeholder="e.g. Salary mismatch, Location" showToast={showToast}/>}
+        {tab==="reasons"&&<SimpleRefList table="rejection_reasons" title="Rejection / Not Interested Reasons" placeholder="e.g. Salary mismatch, Location" showToast={showToast}/>}
         {tab==="stages"&&<FunnelStagesAdmin showToast={showToast}/>}
         {tab==="dialing"&&<DialingSettings showToast={showToast}/>}
         {tab==="queue"&&<IVRQueue showToast={showToast}/>}
@@ -1864,7 +1864,9 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
   const userMap=Object.fromEntries(users.map(u=>[u.id,u]));
   const myUserId=users.find(u=>u.email===getEmail())?.id;
   const newStageIsRejected=stageMap[newStage]?.name==="Rejected";
+  const newStageIsNotInterested=stageMap[newStage]?.name==="Not Interested";
   const newStageIsInterview=stageMap[newStage]?.name==="Interview Scheduled";
+  const newStageNeedsReason=newStageIsRejected||newStageIsNotInterested;
 
   useEffect(()=>{loadActivity();},[]);
   async function loadActivity(){
@@ -1889,15 +1891,15 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
 
   async function changeStage(){
     if(!newStage||newStage===candidate.current_stage_id){showToast("Pick a different stage first","error");return;}
-    if(newStageIsRejected&&!rejectionReasonId){showToast("Pick a rejection reason","error");return;}
+    if(newStageNeedsReason&&!rejectionReasonId){showToast(newStageIsRejected?"Pick a rejection reason":"Pick a reason","error");return;}
     if(newStageIsInterview&&!interviewAt){showToast("Pick when the interview is scheduled","error");return;}
     setBusy(true);
     try{
       const update={current_stage_id:newStage,updated_at:new Date().toISOString()};
-      if(newStageIsRejected)update.rejection_reason_id=rejectionReasonId;
+      if(newStageNeedsReason)update.rejection_reason_id=rejectionReasonId;
       if(newStageIsInterview)update.interview_scheduled_at=new Date(interviewAt).toISOString();
       await dbUpdate("candidates",`id=eq.${candidate.id}`,update);
-      const reasonLabel=newStageIsRejected?rejectionReasons.find(r=>r.id===rejectionReasonId)?.name:null;
+      const reasonLabel=newStageNeedsReason?rejectionReasons.find(r=>r.id===rejectionReasonId)?.name:null;
       const interviewLabel=newStageIsInterview?`Interview scheduled for ${new Date(interviewAt).toLocaleString("en-IN")}`:null;
       const remarkParts=[reasonLabel||interviewLabel,stageRemark.trim()].filter(Boolean);
       await dbInsert("candidate_activity",{
@@ -1969,8 +1971,8 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
                 {funnelStages.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
-            {newStageIsRejected?(
-              <div className="field" style={{marginBottom:0}}><label>Rejection Reason *</label>
+            {newStageNeedsReason?(
+              <div className="field" style={{marginBottom:0}}><label>{newStageIsRejected?"Rejection Reason *":"Reason *"}</label>
                 <select value={rejectionReasonId} onChange={e=>setRejectionReasonId(e.target.value)}>
                   <option value="">—</option>{rejectionReasons.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
                 </select>
@@ -1983,7 +1985,7 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
               <div className="field" style={{marginBottom:0}}><label>Remark / Sub-disposition</label><input value={stageRemark} onChange={e=>setStageRemark(e.target.value)} placeholder="Why the stage is changing"/></div>
             )}
           </div>
-          {(newStageIsRejected||newStageIsInterview)&&(
+          {(newStageNeedsReason||newStageIsInterview)&&(
             <div className="field" style={{marginBottom:8}}><label>Additional Note (optional)</label><input value={stageRemark} onChange={e=>setStageRemark(e.target.value)} placeholder="Any extra detail"/></div>
           )}
           <button className="btn btn-sm" onClick={changeStage} disabled={busy}>Update Stage</button>
