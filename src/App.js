@@ -2121,6 +2121,7 @@ function PositionOpenings({ showToast }) {
   const [processes,setProcesses]=useState([]);
   const [positionTypes,setPositionTypes]=useState([]);
   const [candidates,setCandidates]=useState([]);
+  const [recruiters,setRecruiters]=useState([]);
   const [hiredCandidates,setHiredCandidates]=useState([]);
   const [linkChoice,setLinkChoice]=useState({});
   const [loading,setLoading]=useState(false);
@@ -2140,10 +2141,10 @@ function PositionOpenings({ showToast }) {
         dbSelect("processes","?select=*&order=name"),
         dbSelect("position_types","?select=*&order=name"),
         dbSelect("user_roles","?select=id,name,email"),
-        dbSelect("candidates","?select=id,filled_opening_id&filled_opening_id=not.is.null"),
+        dbSelect("candidates","?select=id,name,filled_opening_id,filled_at,filled_by&filled_opening_id=not.is.null"),
         dbSelect("funnel_stages","?select=id,name"),
       ]);
-      setOpenings(ops);setCompanies(comps);setProcesses(procs);setPositionTypes(posTypes);setCandidates(cands);
+      setOpenings(ops);setCompanies(comps);setProcesses(procs);setPositionTypes(posTypes);setCandidates(cands);setRecruiters(users);
       const me=users.find(u=>u.email===getEmail());
       myUserId.current=me?.id||null;
       const hiredStageId=stages.find(s=>s.name==="Hired")?.id;
@@ -2157,8 +2158,14 @@ function PositionOpenings({ showToast }) {
   const companyMap=Object.fromEntries(companies.map(c=>[c.id,c.name]));
   const processMap=Object.fromEntries(processes.map(p=>[p.id,p.name]));
   const positionMap=Object.fromEntries(positionTypes.map(p=>[p.id,p.name]));
+  const recruiterMap=Object.fromEntries(recruiters.map(u=>[u.id,u.name||u.email]));
   const filledCountByOpening={};
-  candidates.forEach(c=>{if(c.filled_opening_id)filledCountByOpening[c.filled_opening_id]=(filledCountByOpening[c.filled_opening_id]||0)+1;});
+  const fillsByOpening={};
+  candidates.forEach(c=>{
+    if(!c.filled_opening_id)return;
+    filledCountByOpening[c.filled_opening_id]=(filledCountByOpening[c.filled_opening_id]||0)+1;
+    (fillsByOpening[c.filled_opening_id]=fillsByOpening[c.filled_opening_id]||[]).push(c);
+  });
   const openOptions=openings.filter(o=>o.status==="OPEN");
   function openingLabelFor(o){
     return `${companyMap[o.company_id]||"—"} / ${processMap[o.process_id]||"—"} / ${positionMap[o.position_type_id]||"—"}`;
@@ -2168,7 +2175,7 @@ function PositionOpenings({ showToast }) {
     const openingId=linkChoice[candidateId];
     if(!openingId){showToast("Pick an opening first","error");return;}
     try{
-      await dbUpdate("candidates",`id=eq.${candidateId}`,{filled_opening_id:openingId});
+      await dbUpdate("candidates",`id=eq.${candidateId}`,{filled_opening_id:openingId,filled_at:new Date().toISOString(),filled_by:myUserId.current});
       const opening=openings.find(o=>o.id===openingId);
       await dbInsert("candidate_activity",{
         candidate_id:candidateId,type:"NOTE",is_contact_attempt:false,
@@ -2200,7 +2207,10 @@ function PositionOpenings({ showToast }) {
     catch{showToast("Failed to close","error");}
   }
   async function reopenOpening(id){
-    try{await dbUpdate("position_openings",`id=eq.${id}`,{status:"OPEN",closed_at:null});showToast("Reopened","success");load();}
+    // closed_at is left as-is on reopen — it's the last time this opening
+    // was closed, and overwriting it with null erased that history the
+    // moment you reopened, before anyone could ever see it.
+    try{await dbUpdate("position_openings",`id=eq.${id}`,{status:"OPEN"});showToast("Reopened","success");load();}
     catch{showToast("Failed to reopen","error");}
   }
 
@@ -2291,9 +2301,11 @@ function PositionOpenings({ showToast }) {
               <div className="table-wrap">
                 {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-title">No positions here</div></div>:(
                   <table>
-                    <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Status</th><th>Note</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Status</th><th>Closed At</th><th>Note</th><th>Actions</th></tr></thead>
                     <tbody>{filtered.map(o=>{
                       const filled=filledCountByOpening[o.id]||0;
+                      const fills=(fillsByOpening[o.id]||[]).slice().sort((a,b)=>new Date(b.filled_at||0)-new Date(a.filled_at||0));
+                      const fillSummary=fills.map(c=>`${c.name} (${recruiterMap[c.filled_by]||"—"}, ${c.filled_at?new Date(c.filled_at).toLocaleDateString("en-IN"):"—"})`).join("\n");
                       return(
                         <tr key={o.id}>
                           <td style={{fontWeight:500}}>{companyMap[o.company_id]||"—"}</td>
@@ -2301,7 +2313,11 @@ function PositionOpenings({ showToast }) {
                           <td>{positionMap[o.position_type_id]||"—"}</td>
                           <td>{o.target_count}</td>
                           <td style={{color:filled>=o.target_count?T.green:undefined,fontWeight:filled>=o.target_count?600:undefined}}>{filled}</td>
+                          <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={fillSummary}>
+                            {fills.length?[...new Set(fills.map(c=>recruiterMap[c.filled_by]||"—"))].join(", "):"—"}
+                          </td>
                           <td><span className={`badge ${o.status==="OPEN"?"badge-green":"badge-gray"}`}>{o.status}</span></td>
+                          <td style={{fontSize:12,color:T.muted}}>{o.closed_at?new Date(o.closed_at).toLocaleDateString("en-IN"):"—"}</td>
                           <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={o.note||""}>{o.note||"—"}</td>
                           <td>
                             {o.status==="OPEN"?
@@ -2440,7 +2456,7 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
       const update={current_stage_id:newStage,updated_at:new Date().toISOString(),remark:remarkText.trim()||null};
       if(newStageNeedsReason)update.rejection_reason_id=rejectionReasonId;
       if(newStageIsInterview)update.interview_scheduled_at=new Date(interviewAt).toISOString();
-      if(newStageIsHired&&selectedOpeningId)update.filled_opening_id=selectedOpeningId;
+      if(newStageIsHired&&selectedOpeningId){update.filled_opening_id=selectedOpeningId;update.filled_at=new Date().toISOString();update.filled_by=myUserId;}
       await dbUpdate("candidates",`id=eq.${candidate.id}`,update);
       const reasonLabel=newStageNeedsReason?rejectionReasons.find(r=>r.id===rejectionReasonId)?.name:null;
       const interviewLabel=newStageIsInterview?`Interview scheduled for ${new Date(interviewAt).toLocaleString("en-IN")}`:null;
