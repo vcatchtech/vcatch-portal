@@ -2360,6 +2360,8 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
   const [activity,setActivity]=useState([]);
   const [newStage,setNewStage]=useState(candidate.current_stage_id||"");
   const [stageRemark,setStageRemark]=useState("");
+  const [remarkText,setRemarkText]=useState(candidate.remark||"");
+  const [savingRemark,setSavingRemark]=useState(false);
   const [rejectionReasonId,setRejectionReasonId]=useState("");
   const [interviewAt,setInterviewAt]=useState("");
   const [attemptRemark,setAttemptRemark]=useState("");
@@ -2402,6 +2404,16 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
     return `${openingCompanyMap[o.company_id]||"—"} / ${openingProcessMap[o.process_id]||"—"} / ${openingPositionMap[o.position_type_id]||"—"}`;
   }
 
+  async function saveRemark(){
+    setSavingRemark(true);
+    try{
+      await dbUpdate("candidates",`id=eq.${candidate.id}`,{remark:remarkText.trim()||null,updated_at:new Date().toISOString()});
+      showToast("Remark saved","success");
+      onChanged();
+    }catch{showToast("Failed to save remark","error");}
+    finally{setSavingRemark(false);}
+  }
+
   async function saveDetails(){
     setSaving(true);
     try{
@@ -2424,7 +2436,7 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
     if(newStageIsInterview&&!interviewAt){showToast("Pick when the interview is scheduled","error");return;}
     setBusy(true);
     try{
-      const update={current_stage_id:newStage,updated_at:new Date().toISOString()};
+      const update={current_stage_id:newStage,updated_at:new Date().toISOString(),remark:remarkText.trim()||null};
       if(newStageNeedsReason)update.rejection_reason_id=rejectionReasonId;
       if(newStageIsInterview)update.interview_scheduled_at=new Date(interviewAt).toISOString();
       if(newStageIsHired&&selectedOpeningId)update.filled_opening_id=selectedOpeningId;
@@ -2554,6 +2566,13 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
             <span className="badge badge-gray">Contacted {contactCount}x</span>
             {candidate.linked_lead_campaign&&<span className="badge badge-green">IVR called before</span>}
           </div>
+          <div className="field" style={{marginBottom:14}}>
+            <label>Remark</label>
+            <div style={{display:"flex",gap:8}}>
+              <input value={remarkText} onChange={e=>setRemarkText(e.target.value)} placeholder="Free-text note — stays until changed" style={{flex:1}}/>
+              <button className="btn btn-sm" onClick={saveRemark} disabled={savingRemark||remarkText===(candidate.remark||"")}>Save</button>
+            </div>
+          </div>
           <div className="two-col" style={{marginBottom:8}}>
             <div className="field" style={{marginBottom:0}}><label>Move To</label>
               <select value={newStage} onChange={e=>setNewStage(e.target.value)}>
@@ -2578,7 +2597,7 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
                 </select>
               </div>
             ):(
-              <div className="field" style={{marginBottom:0}}><label>Remark / Sub-disposition</label><input value={stageRemark} onChange={e=>setStageRemark(e.target.value)} placeholder="Why the stage is changing"/></div>
+              <div className="field" style={{marginBottom:0}}><label>Sub-disposition (activity log note)</label><input value={stageRemark} onChange={e=>setStageRemark(e.target.value)} placeholder="Why the stage is changing"/></div>
             )}
           </div>
           {(newStageNeedsReason||newStageIsInterview||newStageIsHired)&&(
@@ -2755,9 +2774,6 @@ function HireFlowCandidates({ showToast }) {
   const fileRef=useRef();
 
   const [pageTab,setPageTab]=useState("pipeline");
-  const [dashFrom,setDashFrom]=useState("");
-  const [dashTo,setDashTo]=useState("");
-  const [dashRecruiter,setDashRecruiter]=useState("");
   const role=getRole();
   const myUserId=users.find(u=>u.email===getEmail())?.id;
   const reporteeIds=users.filter(u=>u.manager_id===myUserId).map(u=>u.id);
@@ -2778,13 +2794,13 @@ function HireFlowCandidates({ showToast }) {
         dbSelect("rejection_reasons","?select=*&order=name"),
         dbSelect("funnel_stages","?select=*&order=sort_order"),
         dbSelect("user_roles","?select=id,name,email,role,manager_id"),
-        dbSelect("candidate_activity","?select=candidate_id,is_contact_attempt,changed_at,remark&order=changed_at.desc"),
+        dbSelect("candidate_activity","?select=candidate_id,is_contact_attempt,changed_at&order=changed_at.desc"),
       ]);
       setCandidates(cands);setProcesses(procs);setPositionTypes(posTypes);setLeadSources(sources);setRejectionReasons(reasons);setFunnelStages(stages);setUsers(userList);
 
       const summary={};
       activity.forEach(a=>{
-        if(!summary[a.candidate_id])summary[a.candidate_id]={count:0,last:a.changed_at,lastRemark:a.remark||null};
+        if(!summary[a.candidate_id])summary[a.candidate_id]={count:0,last:a.changed_at};
         if(a.is_contact_attempt)summary[a.candidate_id].count+=1;
       });
       setActivitySummary(summary);
@@ -2808,7 +2824,7 @@ function HireFlowCandidates({ showToast }) {
       return [
         c.name,c.phone,processMap[c.process_id]||"",positionMap[c.position_type_id]||"",
         stageMap[c.current_stage_id]?.name||"",owner?(owner.name||owner.email):"Unassigned",
-        summary?.lastRemark||"",summary?.count||0,
+        c.remark||"",summary?.count||0,
         summary?.last?new Date(summary.last).toLocaleDateString("en-IN"):"Never",
         c.current_salary||"",c.expected_salary||"",c.location||"",sourceMap[c.source_id]||"",
         c.languages_spoken||"",c.created_at?new Date(c.created_at).toLocaleDateString("en-IN"):"",
@@ -2846,28 +2862,18 @@ function HireFlowCandidates({ showToast }) {
   const pageSafe=Math.min(page,totalPages);
   const paged=filtered.slice((pageSafe-1)*pageSize,pageSafe*pageSize);
 
-  // ---- Dashboard ----
+  // ---- Pipeline KPIs (all-time, role-scoped) ----
   const dashScoped=candidates.filter(c=>{
     if(role==="HR")return c.assigned_to===myUserId;
     if(role==="MANAGER"){
       if(!(reporteeIds.includes(c.assigned_to)||c.assigned_to===myUserId))return false;
     }
-    if(dashRecruiter&&c.assigned_to!==dashRecruiter)return false;
     return true;
   });
-  const dashAssignedInRange=dashScoped.filter(c=>{
-    if(!dashFrom&&!dashTo)return true;
-    if(!c.assigned_at)return false;
-    const d=new Date(c.assigned_at).toISOString().split("T")[0];
-    if(dashFrom&&d<dashFrom)return false;
-    if(dashTo&&d>dashTo)return false;
-    return true;
-  });
-  const dashStageBreakdown=funnelStages.map(s=>({
-    stage:s,count:dashAssignedInRange.filter(c=>c.current_stage_id===s.id).length,
-  }));
+  const dashNewToday=dashScoped.filter(c=>c.created_at&&new Date(c.created_at).toISOString().split("T")[0]===today()).length;
+  const dashHiredTotal=dashScoped.filter(c=>stageMap[c.current_stage_id]?.name==="Hired").length;
+  const dashPending=dashScoped.filter(c=>{const s=stageMap[c.current_stage_id];return s&&!s.is_exit_stage;}).length;
   const dashScheduledInterviews=dashScoped.filter(c=>c.interview_scheduled_at&&stageMap[c.current_stage_id]?.name==="Interview Scheduled");
-  const dashInterviewsUpcoming=dashScheduledInterviews.filter(c=>new Date(c.interview_scheduled_at).toISOString().split("T")[0]>today());
   const dashInterviewsToday=dashScheduledInterviews.filter(c=>new Date(c.interview_scheduled_at).toISOString().split("T")[0]===today());
   const dashInterviewsPast=dashScheduledInterviews.filter(c=>new Date(c.interview_scheduled_at).toISOString().split("T")[0]<today());
 
@@ -2880,8 +2886,6 @@ function HireFlowCandidates({ showToast }) {
   }
   const dashUntouchedToday=dashScoped.filter(c=>daysUntouched(c)===1);
   const dashUntouchedPast=dashScoped.filter(c=>daysUntouched(c)>=2);
-
-  const dashRecruiterOptions=role==="ADMIN"?users:role==="MANAGER"?users.filter(u=>reporteeIds.includes(u.id)||u.id===myUserId):[];
 
   async function addCandidate(){
     const phone=addForm.phone.replace(/\D/g,"");
@@ -3039,64 +3043,38 @@ function HireFlowCandidates({ showToast }) {
       </div>
       <div className="page-content">
         <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
-          <button className={`btn btn-sm ${pageTab==="dashboard"?"":"btn-ghost"}`} onClick={()=>setPageTab("dashboard")}>Dashboard</button>
           <button className={`btn btn-sm ${pageTab==="pipeline"?"":"btn-ghost"}`} onClick={()=>setPageTab("pipeline")}>Pipeline</button>
           <button className={`btn btn-sm ${pageTab==="ivr"?"":"btn-ghost"}`} onClick={()=>setPageTab("ivr")}>IVR Interested</button>
         </div>
-        {pageTab==="dashboard"?(
-          <>
-            <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
-              <input type="date" className="filter-input" value={dashFrom} onChange={e=>setDashFrom(e.target.value)} title="From date"/>
-              <input type="date" className="filter-input" value={dashTo} onChange={e=>setDashTo(e.target.value)} title="To date"/>
-              {["ADMIN","MANAGER"].includes(role)&&(
-                <select className="filter-select" value={dashRecruiter} onChange={e=>setDashRecruiter(e.target.value)}>
-                  <option value="">{role==="ADMIN"?"Everyone":"My Team"}</option>
-                  {dashRecruiterOptions.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
-                </select>
-              )}
-              {(dashFrom||dashTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setDashFrom("");setDashTo("");}}>All Time</button>}
-              <button className="btn btn-sm btn-ghost" onClick={()=>{setDashFrom(today());setDashTo(today());}}>Today</button>
+        {pageTab==="ivr"?<InterestedCandidates showToast={showToast}/>:(<>
+        <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",marginBottom:16}}>
+          <div className="kpi-card">
+            <div className="kpi-label">New Today</div>
+            <div className="kpi-value blue">{dashNewToday}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-label">Pending</div>
+            <div className="kpi-value">{dashPending}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-label">Hired</div>
+            <div className="kpi-value">{dashHiredTotal}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-label">Pending Interviews</div>
+            <div className={`kpi-value ${dashInterviewsPast.length?"red":""}`}>{dashInterviewsToday.length+dashInterviewsPast.length}</div>
+            <div className="kpi-sub" style={dashInterviewsPast.length?{color:T.red,fontWeight:600}:undefined}>
+              {dashInterviewsPast.length?`${dashInterviewsPast.length} overdue`:dashInterviewsToday.length?"All on schedule":"None today"}
             </div>
-
-            <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))"}}>
-              <div className="kpi-card">
-                <div className="kpi-label">Total Assigned</div>
-                <div className="kpi-value blue">{dashAssignedInRange.length}</div>
-                <div className="kpi-sub">{!dashFrom&&!dashTo?"All time":dashFrom===dashTo?dashFrom:`${dashFrom} → ${dashTo}`}</div>
-              </div>
-              <div className="kpi-card">
-                <div className="kpi-label">Pending Interviews</div>
-                <div className={`kpi-value ${dashInterviewsPast.length?"red":""}`}>{dashInterviewsToday.length+dashInterviewsPast.length}</div>
-                <div className="kpi-sub" style={dashInterviewsPast.length?{color:T.red,fontWeight:600}:undefined}>
-                  {dashInterviewsPast.length?`${dashInterviewsPast.length} overdue`:dashInterviewsToday.length?"All on schedule":"None today"}
-                  {dashInterviewsUpcoming.length>0&&` · ${dashInterviewsUpcoming.length} upcoming`}
-                </div>
-              </div>
-              <div className="kpi-card">
-                <div className="kpi-label">Untouched Cases</div>
-                <div className={`kpi-value ${dashUntouchedPast.length?"red":""}`}>{dashUntouchedToday.length+dashUntouchedPast.length}</div>
-                <div className="kpi-sub" style={dashUntouchedPast.length?{color:T.red,fontWeight:600}:undefined}>
-                  {dashUntouchedPast.length?`${dashUntouchedPast.length} critical (2+ days)`:dashUntouchedToday.length?"Since yesterday":"None"}
-                </div>
-              </div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-label">Untouched Cases</div>
+            <div className={`kpi-value ${dashUntouchedPast.length?"red":""}`}>{dashUntouchedToday.length+dashUntouchedPast.length}</div>
+            <div className="kpi-sub" style={dashUntouchedPast.length?{color:T.red,fontWeight:600}:undefined}>
+              {dashUntouchedPast.length?`${dashUntouchedPast.length} critical (2+ days)`:dashUntouchedToday.length?"Since yesterday":"None"}
             </div>
-
-            <div className="card">
-              <div className="card-header"><div className="card-title">Stage Breakdown — Assigned in Range</div></div>
-              <div style={{padding:"8px 20px 20px"}}>
-                {(()=>{const max=Math.max(1,...dashStageBreakdown.map(s=>s.count));return dashStageBreakdown.map(({stage,count})=>(
-                  <div key={stage.id} style={{display:"flex",alignItems:"center",gap:12,padding:"7px 0"}} title={`${stage.name}: ${count}`}>
-                    <div style={{width:130,fontSize:12,color:T.muted,flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stage.name}</div>
-                    <div style={{flex:1,background:T.border,borderRadius:4,height:10,position:"relative"}}>
-                      <div style={{width:`${(count/max)*100}%`,minWidth:count?4:0,height:10,borderRadius:4,background:stage.is_exit_stage?T.purple:T.accent,transition:"width 0.3s ease"}}/>
-                    </div>
-                    <div style={{width:28,fontSize:12,fontWeight:600,color:T.text,textAlign:"right",flexShrink:0}}>{count}</div>
-                  </div>
-                ));})()}
-              </div>
-            </div>
-          </>
-        ):pageTab==="ivr"?<InterestedCandidates showToast={showToast}/>:(<>
+          </div>
+        </div>
         <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
           <input className="filter-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or phone" style={{maxWidth:220}}/>
           <select className="filter-select" value={stageFilter} onChange={e=>setStageFilter(e.target.value)}>
@@ -3174,8 +3152,8 @@ function HireFlowCandidates({ showToast }) {
                           ["HR","MANAGER"].includes(role)?<button className="btn btn-sm btn-ghost" onClick={e=>{e.stopPropagation();takeCandidate(c);}}>Take</button>:"Unassigned"
                         )}
                       </td>
-                      <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={summary?.lastRemark||""}>
-                        {summary?.lastRemark||"—"}
+                      <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={c.remark||""}>
+                        {c.remark||"—"}
                       </td>
                       <td>{summary?.count||0}x</td>
                       <td style={{fontSize:12,color:stale?T.amber:T.muted}}>
