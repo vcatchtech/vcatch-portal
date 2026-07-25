@@ -2301,7 +2301,7 @@ function PositionOpenings({ showToast }) {
               <div className="table-wrap">
                 {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-title">No positions here</div></div>:(
                   <table>
-                    <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Status</th><th>Closed At</th><th>Note</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Status</th><th>Opened At</th><th>Closed At</th><th>Note</th><th>Actions</th></tr></thead>
                     <tbody>{filtered.map(o=>{
                       const filled=filledCountByOpening[o.id]||0;
                       const fills=(fillsByOpening[o.id]||[]).slice().sort((a,b)=>new Date(b.filled_at||0)-new Date(a.filled_at||0));
@@ -2317,6 +2317,7 @@ function PositionOpenings({ showToast }) {
                             {fills.length?[...new Set(fills.map(c=>recruiterMap[c.filled_by]||"—"))].join(", "):"—"}
                           </td>
                           <td><span className={`badge ${o.status==="OPEN"?"badge-green":"badge-gray"}`}>{o.status}</span></td>
+                          <td style={{fontSize:12,color:T.muted}} title={recruiterMap[o.created_by]?`Opened by ${recruiterMap[o.created_by]}`:""}>{o.created_at?new Date(o.created_at).toLocaleDateString("en-IN"):"—"}</td>
                           <td style={{fontSize:12,color:T.muted}}>{o.closed_at?new Date(o.closed_at).toLocaleDateString("en-IN"):"—"}</td>
                           <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={o.note||""}>{o.note||"—"}</td>
                           <td>
@@ -3501,7 +3502,7 @@ export default function App() {
   const allNav=[
     {id:"dashboard",label:"Dashboard",icon:"",roles:["ADMIN","MANAGER","HR","CEO"]},
     {id:"hireflow",label:"Hire Flow",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"hireflow-settings",label:"Settings",icon:"",roles:["ADMIN","MANAGER"]},
+    {id:"openings",label:"Position Openings",icon:"",roles:["ADMIN","MANAGER","CEO"]},
     {id:"campaigns",label:"IVR Campaigns",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"leads",label:"Leads",icon:"",roles:["ADMIN","MANAGER","HR"]},
     {id:"interested",label:"IVR Interested Candidates",icon:"",roles:["ADMIN","MANAGER","HR"]},
@@ -3509,7 +3510,7 @@ export default function App() {
     {id:"callerids",label:"IVR Caller IDs",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"audio",label:"IVR Audio Manager",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"logs",label:"IVR Call Logs",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"openings",label:"Position Openings",icon:"",roles:["ADMIN","MANAGER","CEO"]},
+    {id:"hireflow-settings",label:"Settings",icon:"",roles:["ADMIN","MANAGER"]},
     {id:"users",label:"Users",icon:"",roles:["ADMIN"]},
   ];
 
