@@ -3254,24 +3254,37 @@ function HireFlowCandidates({ showToast }) {
 // ================================================
 function ResizableTh({ col, widths, setWidths, defaultWidth, children, style }) {
   const width=widths[col]||defaultWidth;
+  const [hover,setHover]=useState(false);
+  const [dragging,setDragging]=useState(false);
   function onMouseDown(e){
     e.preventDefault();
     const startX=e.clientX;
+    setDragging(true);
     function onMove(e2){
       const delta=e2.clientX-startX;
       setWidths(w=>({...w,[col]:Math.max(50,width+delta)}));
     }
     function onUp(){
+      setDragging(false);
       document.removeEventListener("mousemove",onMove);
       document.removeEventListener("mouseup",onUp);
     }
     document.addEventListener("mousemove",onMove);
     document.addEventListener("mouseup",onUp);
   }
+  const active=hover||dragging;
   return (
     <th style={{...style,width,position:"relative",userSelect:"none"}}>
       {children}
-      <span onMouseDown={onMouseDown} style={{position:"absolute",right:0,top:0,bottom:0,width:6,cursor:"col-resize",zIndex:1}}/>
+      <span
+        onMouseDown={onMouseDown}
+        onMouseEnter={()=>setHover(true)}
+        onMouseLeave={()=>setHover(false)}
+        title="Drag to resize column"
+        style={{position:"absolute",right:-4,top:0,bottom:0,width:9,cursor:"col-resize",zIndex:2,display:"flex",justifyContent:"center"}}
+      >
+        <span style={{width:active?3:1.5,height:"100%",background:active?T.accent:T.border,transition:dragging?"none":"width 0.12s, background 0.12s"}}/>
+      </span>
     </th>
   );
 }
