@@ -2834,9 +2834,7 @@ function HireFlowCandidates({ showToast }) {
   }
 
   function isStale(c){
-    const last=activitySummary[c.id]?.last||c.updated_at||c.created_at;
-    if(!last)return false;
-    return (Date.now()-new Date(last).getTime())>24*60*60*1000;
+    return daysUntouched(c)>=1;
   }
 
   const filtered=candidates.filter(c=>{
@@ -2884,8 +2882,9 @@ function HireFlowCandidates({ showToast }) {
     const msPerDay=24*60*60*1000;
     return Math.floor((new Date(today()).getTime()-new Date(lastDate).getTime())/msPerDay);
   }
-  const dashUntouchedToday=dashScoped.filter(c=>daysUntouched(c)===1);
-  const dashUntouchedPast=dashScoped.filter(c=>daysUntouched(c)>=2);
+  const dashActiveScoped=dashScoped.filter(c=>!stageMap[c.current_stage_id]?.is_exit_stage);
+  const dashUntouchedToday=dashActiveScoped.filter(c=>daysUntouched(c)===1);
+  const dashUntouchedPast=dashActiveScoped.filter(c=>daysUntouched(c)>=2);
 
   async function addCandidate(){
     const phone=addForm.phone.replace(/\D/g,"");
@@ -3071,7 +3070,8 @@ function HireFlowCandidates({ showToast }) {
             <div className="kpi-label">Untouched Cases</div>
             <div className={`kpi-value ${dashUntouchedPast.length?"red":""}`}>{dashUntouchedToday.length+dashUntouchedPast.length}</div>
             <div className="kpi-sub" style={dashUntouchedPast.length?{color:T.red,fontWeight:600}:undefined}>
-              {dashUntouchedPast.length?`${dashUntouchedPast.length} critical (2+ days)`:dashUntouchedToday.length?"Since yesterday":"None"}
+              {!dashUntouchedToday.length&&!dashUntouchedPast.length?"None":
+                [dashUntouchedToday.length?`${dashUntouchedToday.length} since yesterday`:null,dashUntouchedPast.length?`${dashUntouchedPast.length} critical (2+ days)`:null].filter(Boolean).join(" · ")}
             </div>
           </div>
         </div>
