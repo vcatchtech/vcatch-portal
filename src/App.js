@@ -1114,6 +1114,7 @@ function Leads({ showToast }) {
     if(!validRows.length){showToast("No valid leads to upload","error");return;}
     const camp=campaigns.find(c=>c.name===campaign);
     if(camp?.status==="RUNNING"){showToast("Pause the campaign first before adding leads","error");return;}
+    if(camp?.status==="COMPLETED"){showToast("This campaign is completed — create a new campaign instead","error");return;}
     setUploading(true);
 
     try{
@@ -1185,7 +1186,7 @@ function Leads({ showToast }) {
                 <label>Assign to Campaign *</label>
                 <select value={campaign} onChange={e=>{setCampaign(e.target.value);setSelectedCampaignData(campaigns.find(c=>c.name===e.target.value)||null);}}>
                   <option value="">— Select campaign —</option>
-                  {campaigns.map(c=><option key={c.name} value={c.name} disabled={c.status==="RUNNING"}>{c.name}{c.status==="RUNNING"?" (running — pause first)":""}</option>)}
+                  {campaigns.map(c=><option key={c.name} value={c.name} disabled={c.status==="RUNNING"||c.status==="COMPLETED"}>{c.name}{c.status==="RUNNING"?" (running — pause first)":c.status==="COMPLETED"?" (completed)":""}</option>)}
                 </select>
                 {campaigns.length===0&&<div className="warn">Create a campaign first</div>}
               </div>
