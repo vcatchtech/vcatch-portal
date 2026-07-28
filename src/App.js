@@ -3826,9 +3826,9 @@ export default function App() {
               <div style={{background:T_cur.mode==="dark"?"#fff":"transparent",borderRadius:T_cur.mode==="dark"?8:0,padding:T_cur.mode==="dark"?"6px 10px":0,display:"inline-block"}}>
                 <img src={LOGO_BASE64} alt="VCatch" style={{height:30,display:"block"}}/>
               </div>
-              <div style={{fontSize:20,fontWeight:800,letterSpacing:"-0.02em",color:T_cur.text}}>VCatch</div>
+              <div style={{fontSize:20,fontWeight:800,letterSpacing:"-0.02em",color:T_cur.text}}>Hire Flow</div>
             </div>
-            <div className="sidebar-tagline">Hire Flow</div>
+            <div className="sidebar-tagline">VCatch</div>
           </div>
           <nav className="nav">
             <div className="nav-section">Menu</div>
