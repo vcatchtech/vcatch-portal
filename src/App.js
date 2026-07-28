@@ -756,6 +756,16 @@ function Dashboard({ showToast, role }) {
               </div>
             </div>
 
+            <div className="card" style={{marginBottom:16}}>
+              <div className="card-header"><div className="card-title">Day-wise Attempts &amp; Hires</div></div>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Date</th><th>Attempts</th><th>Hired</th></tr></thead>
+                  <tbody>{hfBuckets.map(b=><tr key={b.key}><td>{hfFormatLabel(b.key)}</td><td>{b.attempted}</td><td>{b.hires}</td></tr>)}</tbody>
+                </table>
+              </div>
+            </div>
+
             {["ADMIN","MANAGER","CEO"].includes(role)&&hfRecruiterStats.length>0&&(
               <div className="card">
                 <div className="card-header"><div className="card-title">HR Performance</div><span style={{fontSize:12,color:T.muted}}>Hired is for the selected range; Assigned is current total</span></div>
@@ -831,6 +841,16 @@ function Dashboard({ showToast, role }) {
           <div className="card">
             <div className="card-header"><div className="card-title">Interested Trend</div></div>
             <div className="card-body"><MiniBarChart data={ivrBuckets} valueKey="interested" color={T.green} formatLabel={ivrFormatLabel}/></div>
+          </div>
+        </div>
+
+        <div className="card" style={{marginBottom:16}}>
+          <div className="card-header"><div className="card-title">Day-wise Dialed &amp; Interested</div></div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Date</th><th>Dialed</th><th>Interested</th></tr></thead>
+              <tbody>{ivrBuckets.map(b=><tr key={b.key}><td>{ivrFormatLabel(b.key)}</td><td>{b.calls}</td><td>{b.interested}</td></tr>)}</tbody>
+            </table>
           </div>
         </div>
 
