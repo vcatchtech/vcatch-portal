@@ -615,7 +615,11 @@ function Dashboard({ showToast, role }) {
       setHfHireEvents(hireEventsInRange);
 
       const hired=hiredCurrent;
-      setHfSummary({total,hired,rejected,notInterested,inPipeline,conversion:total?Math.round((hired/total)*100):0,attempted:attemptEvents.length,interviews:interviewEvents.length});
+      // Attempted counts unique candidates reached, not every logged attempt
+      // — a candidate called 3 times in the range was inflating this to 3
+      // instead of 1 person actually attempted.
+      const uniqueAttempted=new Set(attemptEvents.map(a=>a.candidate_id)).size;
+      setHfSummary({total,hired,rejected,notInterested,inPipeline,conversion:total?Math.round((hired/total)*100):0,attempted:uniqueAttempted,interviews:interviewEvents.length});
 
       if(["ADMIN","MANAGER","CEO"].includes(role)){
         const hireCountByCandidate={};
@@ -692,7 +696,15 @@ function Dashboard({ showToast, role }) {
       while(cur<=end&&keys.length<60){keys.push(cur.toISOString().split("T")[0]);cur.setUTCDate(cur.getUTCDate()+7);}
     }
     const attemptMap={},hireMap={};
-    hfAttemptEvents.forEach(a=>{const k=hfKeyFn(a.changed_at);attemptMap[k]=(attemptMap[k]||0)+1;});
+    // Per-bucket unique candidates, not raw attempt events — the same
+    // candidate logged multiple times in one day/week was inflating the
+    // count of people actually reached out to.
+    const attemptSeen={};
+    hfAttemptEvents.forEach(a=>{
+      const k=hfKeyFn(a.changed_at);
+      attemptSeen[k]=attemptSeen[k]||new Set();
+      if(!attemptSeen[k].has(a.candidate_id)){attemptSeen[k].add(a.candidate_id);attemptMap[k]=(attemptMap[k]||0)+1;}
+    });
     hfHireEvents.forEach(h=>{const k=hfKeyFn(h.changed_at);hireMap[k]=(hireMap[k]||0)+1;});
     const capped=hfView==="day"?keys.slice(-7):keys;
     return capped.map(k=>({key:k,attempted:attemptMap[k]||0,hires:hireMap[k]||0}));
@@ -3099,6 +3111,7 @@ function HireFlowCandidates({ showToast }) {
   const fileRef=useRef();
 
   const [pageTab,setPageTab]=useState("pipeline");
+  const [hiredDateMap,setHiredDateMap]=useState({});
   const role=getRole();
   const myUserId=users.find(u=>u.email===getEmail())?.id;
   const reporteeIds=users.filter(u=>u.manager_id===myUserId).map(u=>u.id);
@@ -3129,6 +3142,14 @@ function HireFlowCandidates({ showToast }) {
         if(a.is_contact_attempt)summary[a.candidate_id].count+=1;
       });
       setActivitySummary(summary);
+
+      const hiredStageId=stages.find(s=>s.name==="Hired")?.id;
+      if(hiredStageId){
+        const hireEvents=await dbSelect("candidate_activity",`?select=candidate_id,changed_at&type=eq.STAGE_CHANGE&to_stage_id=eq.${hiredStageId}&order=changed_at.desc`);
+        const dateMap={};
+        hireEvents.forEach(e=>{if(!dateMap[e.candidate_id])dateMap[e.candidate_id]=e.changed_at;});
+        setHiredDateMap(dateMap);
+      }
     }catch(e){showToast("Failed to load candidates","error");}
     finally{setLoading(false);}
   }
@@ -3184,6 +3205,16 @@ function HireFlowCandidates({ showToast }) {
   const totalPages=Math.max(1,Math.ceil(filtered.length/pageSize));
   const pageSafe=Math.min(page,totalPages);
   const paged=filtered.slice((pageSafe-1)*pageSize,pageSafe*pageSize);
+
+  // Simple read-mostly Hired list — same role scoping as everywhere else
+  // (HR sees only their own, Manager sees their team, Admin sees everyone).
+  const hiredStageIdForTab=funnelStages.find(s=>s.name==="Hired")?.id;
+  const hiredList=candidates.filter(c=>{
+    if(c.current_stage_id!==hiredStageIdForTab)return false;
+    if(role==="HR")return c.assigned_to===myUserId;
+    if(role==="MANAGER")return reporteeIds.includes(c.assigned_to)||c.assigned_to===myUserId;
+    return true;
+  }).sort((a,b)=>new Date(hiredDateMap[b.id]||0)-new Date(hiredDateMap[a.id]||0));
 
   // ---- Pipeline KPIs (all-time, role-scoped) ----
   const dashScoped=candidates.filter(c=>{
@@ -3437,9 +3468,35 @@ function HireFlowCandidates({ showToast }) {
       <div className="page-content">
         <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
           <button className={`btn btn-sm ${pageTab==="pipeline"?"":"btn-ghost"}`} onClick={()=>setPageTab("pipeline")}>Pipeline</button>
+          <button className={`btn btn-sm ${pageTab==="hired"?"":"btn-ghost"}`} onClick={()=>setPageTab("hired")}>Hired ({hiredList.length})</button>
           <button className={`btn btn-sm ${pageTab==="ivr"?"":"btn-ghost"}`} onClick={()=>setPageTab("ivr")}>IVR Interested</button>
         </div>
-        {pageTab==="ivr"?<InterestedCandidates showToast={showToast}/>:(<>
+        {pageTab==="ivr"?<InterestedCandidates showToast={showToast}/>:pageTab==="hired"?(
+          <div className="card">
+            <div className="card-header"><div className="card-title">Hired ({hiredList.length})</div><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div>
+            <div className="table-wrap">
+              {loading?<div className="empty-state">Loading...</div>:hiredList.length===0?<div className="empty-state"><div className="empty-icon">⬡</div><div className="empty-title">No hired candidates yet</div></div>:(
+                <table>
+                  <thead><tr><th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Assigned To</th><th>Hired Date</th><th>Linked Opening</th></tr></thead>
+                  <tbody>{hiredList.map(c=>{
+                    const owner=userMap[c.assigned_to];
+                    return(
+                      <tr key={c.id}>
+                        <td style={{fontWeight:500}}>{c.name}</td>
+                        <td style={{fontFamily:"monospace"}}>{c.phone}</td>
+                        <td>{processMap[c.process_id]||"—"}</td>
+                        <td>{positionMap[c.position_type_id]||"—"}</td>
+                        <td>{owner?(owner.name||owner.email):"Unassigned"}</td>
+                        <td>{hiredDateMap[c.id]?new Date(hiredDateMap[c.id]).toLocaleDateString("en-IN"):"—"}</td>
+                        <td>{c.filled_opening_id?"✓ Linked":"—"}</td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        ):(<>
         <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",marginBottom:16}}>
           <div className="kpi-card">
             <div className="kpi-label">New Today</div>
