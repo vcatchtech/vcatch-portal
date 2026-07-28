@@ -2681,12 +2681,15 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
   const newStageNeedsReason=newStageIsRejected||newStageIsNotInterested;
 
   const [openOpenings,setOpenOpenings]=useState([]);
+  const [allOpenings,setAllOpenings]=useState([]);
   const [openingCompanies,setOpeningCompanies]=useState([]);
   const [selectedOpeningId,setSelectedOpeningId]=useState("");
+  const [fillOpeningId,setFillOpeningId]=useState(candidate.filled_opening_id||"");
+  const [savingFillOpening,setSavingFillOpening]=useState(false);
 
   useEffect(()=>{
     loadActivity();
-    dbSelect("position_openings","?select=*&status=eq.OPEN").then(setOpenOpenings).catch(()=>{});
+    dbSelect("position_openings","?select=*").then(all=>{setAllOpenings(all);setOpenOpenings(all.filter(o=>o.status==="OPEN"));}).catch(()=>{});
     dbSelect("companies","?select=id,name").then(setOpeningCompanies).catch(()=>{});
   },[]);
   async function loadActivity(){
@@ -2707,6 +2710,36 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
       onChanged();
     }catch{showToast("Failed to save remark","error");}
     finally{setSavingRemark(false);}
+  }
+
+  async function saveFillOpening(){
+    setSavingFillOpening(true);
+    try{
+      if(fillOpeningId){
+        const opening=allOpenings.find(o=>o.id===fillOpeningId);
+        await dbUpdate("candidates",`id=eq.${candidate.id}`,{filled_opening_id:fillOpeningId,filled_at:new Date().toISOString(),filled_by:myUserId});
+        await dbInsert("candidate_activity",{
+          candidate_id:candidate.id,type:"NOTE",is_contact_attempt:false,
+          remark:`Linked to opening: ${openingLabel(opening)}`,changed_by:myUserId,
+        });
+        const filledNow=await dbSelect("candidates",`?select=id&filled_opening_id=eq.${fillOpeningId}`);
+        if(opening?.status==="OPEN"&&filledNow.length>=opening.target_count){
+          await dbUpdate("position_openings",`id=eq.${fillOpeningId}`,{status:"CLOSED",closed_at:new Date().toISOString(),closed_by:myUserId});
+          showToast("Linked — target headcount reached, position auto-closed","success");
+        }else{
+          showToast("Linked","success");
+        }
+      }else{
+        await dbUpdate("candidates",`id=eq.${candidate.id}`,{filled_opening_id:null,filled_at:null,filled_by:null});
+        await dbInsert("candidate_activity",{
+          candidate_id:candidate.id,type:"NOTE",is_contact_attempt:false,
+          remark:"Unlinked from opening",changed_by:myUserId,
+        });
+        showToast("Unlinked","success");
+      }
+      onChanged();loadActivity();
+    }catch{showToast("Failed to update opening link","error");}
+    finally{setSavingFillOpening(false);}
   }
 
   async function saveDetails(){
@@ -2897,6 +2930,20 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
               <button className="btn btn-sm" onClick={saveRemark} disabled={savingRemark||remarkText===(candidate.remark||"")}>Save</button>
             </div>
           </div>
+          {currentStage?.name==="Hired"&&(
+            <div className="field" style={{marginBottom:14}}>
+              <label>Fills Which Opening?</label>
+              <div style={{display:"flex",gap:8}}>
+                <select value={fillOpeningId} onChange={e=>setFillOpeningId(e.target.value)} style={{flex:1}}>
+                  <option value="">— Not linked to an opening —</option>
+                  {(fillOpeningId&&!openOpenings.some(o=>o.id===fillOpeningId)?[allOpenings.find(o=>o.id===fillOpeningId)].filter(Boolean):[]).concat(openOpenings).map(o=>
+                    <option key={o.id} value={o.id}>{openingLabel(o)}{o.status==="CLOSED"?" (closed)":""}</option>
+                  )}
+                </select>
+                <button className="btn btn-sm" onClick={saveFillOpening} disabled={savingFillOpening||fillOpeningId===(candidate.filled_opening_id||"")}>Save</button>
+              </div>
+            </div>
+          )}
           <div className="two-col" style={{marginBottom:8}}>
             <div className="field" style={{marginBottom:0}}><label>Move To</label>
               <select value={newStage} onChange={e=>setNewStage(e.target.value)}>
