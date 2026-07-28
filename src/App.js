@@ -2203,7 +2203,7 @@ function PositionOpenings({ showToast }) {
   }
 
   async function closeOpening(id){
-    try{await dbUpdate("position_openings",`id=eq.${id}`,{status:"CLOSED",closed_at:new Date().toISOString()});showToast("Closed","success");load();}
+    try{await dbUpdate("position_openings",`id=eq.${id}`,{status:"CLOSED",closed_at:new Date().toISOString(),closed_by:myUserId.current});showToast("Closed","success");load();}
     catch{showToast("Failed to close","error");}
   }
   async function reopenOpening(id){
@@ -2219,6 +2219,30 @@ function PositionOpenings({ showToast }) {
   const openTarget=openings.filter(o=>o.status==="OPEN").reduce((s,o)=>s+o.target_count,0);
   const openFilled=openings.filter(o=>o.status==="OPEN").reduce((s,o)=>s+(filledCountByOpening[o.id]||0),0);
 
+  // Days-to-close: only meaningful for openings that have actually closed.
+  // For anything reopened and closed again, this measures from the
+  // original open date to the latest close, so a reopen gap in between
+  // inflates the number — acceptable for now since we don't keep a full
+  // per-cycle history, just the most recent close.
+  const closedOnes=openings.filter(o=>o.status==="CLOSED"&&o.closed_at);
+  function daysToClose(o){return (new Date(o.closed_at)-new Date(o.created_at))/86400000;}
+  const avgDaysToClose=closedOnes.length?(closedOnes.reduce((s,o)=>s+daysToClose(o),0)/closedOnes.length):null;
+  const closedToday=closedOnes.filter(o=>new Date(o.closed_at).toISOString().split("T")[0]===today()).length;
+
+  function avgByKey(keyFn,labelMap){
+    const groups={};
+    closedOnes.forEach(o=>{
+      const k=keyFn(o);
+      (groups[k]=groups[k]||[]).push(o);
+    });
+    return Object.entries(groups).map(([k,ops])=>({
+      label:labelMap[k]||"—",count:ops.length,
+      avgDays:ops.reduce((s,o)=>s+daysToClose(o),0)/ops.length,
+    })).sort((a,b)=>b.count-a.count);
+  }
+  const avgByProcess=avgByKey(o=>o.process_id,processMap);
+  const avgByPosition=avgByKey(o=>o.position_type_id,positionMap);
+
   return(
     <div>
       <div className="page-header"><div><div className="page-title">Position Openings</div><div className="page-sub">Requisitions across all companies — separate from the hiring pipeline</div></div></div>
@@ -2227,7 +2251,28 @@ function PositionOpenings({ showToast }) {
               <div className="kpi-card"><div className="kpi-label">Open Positions</div><div className="kpi-value blue">{openCount}</div><div className="kpi-sub">Requisitions</div></div>
               <div className="kpi-card"><div className="kpi-label">Target Headcount</div><div className="kpi-value amber">{openTarget}</div><div className="kpi-sub">Across open positions</div></div>
               <div className="kpi-card"><div className="kpi-label">Filled So Far</div><div className="kpi-value green">{openFilled}</div><div className="kpi-sub">{openTarget?Math.round((openFilled/openTarget)*100):0}% of target</div></div>
+              <div className="kpi-card"><div className="kpi-label">Closed Today</div><div className="kpi-value green">{closedToday}</div><div className="kpi-sub">Positions closed</div></div>
+              <div className="kpi-card"><div className="kpi-label">Avg Days to Close</div><div className="kpi-value blue">{avgDaysToClose!==null?avgDaysToClose.toFixed(1):"—"}</div><div className="kpi-sub">Across {closedOnes.length} closed position{closedOnes.length===1?"":"s"}</div></div>
             </div>
+
+            {closedOnes.length>0&&(
+              <div className="two-col" style={{marginBottom:16}}>
+                <div className="card">
+                  <div className="card-header"><div className="card-title">Avg Days to Close — by Process</div></div>
+                  <div className="table-wrap"><table>
+                    <thead><tr><th>Process</th><th>Closed</th><th>Avg Days</th></tr></thead>
+                    <tbody>{avgByProcess.map(r=><tr key={r.label}><td>{r.label}</td><td>{r.count}</td><td>{r.avgDays.toFixed(1)}</td></tr>)}</tbody>
+                  </table></div>
+                </div>
+                <div className="card">
+                  <div className="card-header"><div className="card-title">Avg Days to Close — by Position</div></div>
+                  <div className="table-wrap"><table>
+                    <thead><tr><th>Position</th><th>Closed</th><th>Avg Days</th></tr></thead>
+                    <tbody>{avgByPosition.map(r=><tr key={r.label}><td>{r.label}</td><td>{r.count}</td><td>{r.avgDays.toFixed(1)}</td></tr>)}</tbody>
+                  </table></div>
+                </div>
+              </div>
+            )}
 
             <div className="card" style={{marginBottom:16}}>
               <div className="card-header"><div className="card-title">Open a New Position</div></div>
@@ -2301,7 +2346,7 @@ function PositionOpenings({ showToast }) {
               <div className="table-wrap">
                 {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-title">No positions here</div></div>:(
                   <table>
-                    <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Status</th><th>Opened At</th><th>Closed At</th><th>Note</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Status</th><th>Opened At</th><th>Closed At</th><th>Closed By</th><th>Note</th><th>Actions</th></tr></thead>
                     <tbody>{filtered.map(o=>{
                       const filled=filledCountByOpening[o.id]||0;
                       const fills=(fillsByOpening[o.id]||[]).slice().sort((a,b)=>new Date(b.filled_at||0)-new Date(a.filled_at||0));
@@ -2319,6 +2364,7 @@ function PositionOpenings({ showToast }) {
                           <td><span className={`badge ${o.status==="OPEN"?"badge-green":"badge-gray"}`}>{o.status}</span></td>
                           <td style={{fontSize:12,color:T.muted}} title={recruiterMap[o.created_by]?`Opened by ${recruiterMap[o.created_by]}`:""}>{o.created_at?new Date(o.created_at).toLocaleDateString("en-IN"):"—"}</td>
                           <td style={{fontSize:12,color:T.muted}}>{o.closed_at?new Date(o.closed_at).toLocaleDateString("en-IN"):"—"}</td>
+                          <td style={{fontSize:12,color:T.muted}}>{o.closed_by?recruiterMap[o.closed_by]||"—":"—"}</td>
                           <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={o.note||""}>{o.note||"—"}</td>
                           <td>
                             {o.status==="OPEN"?
@@ -2562,6 +2608,19 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
     finally{setBusy(false);}
   }
 
+  async function deleteCandidate(){
+    if(!canDirectReassign){showToast("Only Admin/Manager can delete candidates","error");return;}
+    if(!window.confirm(`Permanently delete ${candidate.name}? This removes the candidate and their activity history. This cannot be undone.`))return;
+    setBusy(true);
+    try{
+      await dbDelete("candidate_activity",`candidate_id=eq.${candidate.id}`);
+      await dbDelete("candidates",`id=eq.${candidate.id}`);
+      showToast("Candidate deleted","success");
+      onChanged();onClose();
+    }catch{showToast("Failed to delete","error");}
+    finally{setBusy(false);}
+  }
+
   async function sendToIvr(){
     setSendingToIvr(true);
     try{
@@ -2686,6 +2745,15 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
         </div>
       </div>
 
+      {canDirectReassign&&(
+        <div className="card" style={{marginBottom:16,borderColor:T.red}}>
+          <div className="card-header"><div className="card-title" style={{color:T.red}}>Danger Zone</div></div>
+          <div className="card-body">
+            <button className="btn btn-sm btn-ghost" style={{color:T.red,borderColor:T.red}} onClick={deleteCandidate} disabled={busy}>Delete Candidate</button>
+          </div>
+        </div>
+      )}
+
       <div className="card" style={{marginBottom:16}}>
         <div className="card-header" style={{cursor:"pointer"}} onClick={()=>setShowDetails(d=>!d)}>
           <div className="card-title">Candidate Details {showDetails?"▾":"▸"}</div>
@@ -2789,6 +2857,7 @@ function HireFlowCandidates({ showToast }) {
   const [selectedIds,setSelectedIds]=useState([]);
   const [bulkAssignTo,setBulkAssignTo]=useState("");
   const [bulkAssigning,setBulkAssigning]=useState(false);
+  const [bulkDeleting,setBulkDeleting]=useState(false);
   const fileRef=useRef();
 
   const [pageTab,setPageTab]=useState("pipeline");
@@ -3022,6 +3091,21 @@ function HireFlowCandidates({ showToast }) {
     finally{setBulkAssigning(false);}
   }
 
+  async function bulkDelete(){
+    if(!selectedIds.length)return;
+    if(!window.confirm(`Permanently delete ${selectedIds.length} candidate(s)? This cannot be undone.`))return;
+    setBulkDeleting(true);
+    try{
+      const idList=selectedIds.join(",");
+      await dbDelete("candidate_activity",`candidate_id=in.(${idList})`);
+      await dbDelete("candidates",`id=in.(${idList})`);
+      showToast(`${selectedIds.length} candidates deleted`,"success");
+      setSelectedIds([]);
+      loadAll();
+    }catch{showToast("Failed to delete","error");}
+    finally{setBulkDeleting(false);}
+  }
+
   function toggleSelect(id){
     setSelectedIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
   }
@@ -3123,6 +3207,7 @@ function HireFlowCandidates({ showToast }) {
               <option value="">Reassign to…</option>{assignableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
             </select>
             <button className="btn btn-sm" onClick={bulkAssign} disabled={bulkAssigning||!bulkAssignTo}>{bulkAssigning?"Reassigning...":"Reassign"}</button>
+            <button className="btn btn-sm btn-ghost" style={{color:T.red,borderColor:T.red}} onClick={bulkDelete} disabled={bulkDeleting}>{bulkDeleting?"Deleting...":"Delete"}</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>setSelectedIds([])}>Clear</button>
           </div>
         )}
@@ -3151,7 +3236,12 @@ function HireFlowCandidates({ showToast }) {
                   const summary=activitySummary[c.id];
                   const stale=isStale(c);
                   const isOwn=["ADMIN","MANAGER"].includes(role)&&c.assigned_to===myUserId;
-                  const rowBg=stale?T.amberDim:isOwn?`${T.accent}14`:"transparent";
+                  // Stale no longer washes the whole row — with most candidates
+                  // untouched since yesterday, that made nearly every row the
+                  // same amber tint, drowning out the "your case" highlight and
+                  // reading as an unintentional color glitch. The "— STALE" text
+                  // on Last Activity already carries that signal on its own.
+                  const rowBg=isOwn?`${T.accent}14`:"transparent";
                   return(
                     <tr key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer",background:rowBg}}>
                       <td style={{color:T.muted,fontSize:12,padding:"6px 4px"}}>{(pageSafe-1)*pageSize+i+1}</td>
@@ -3164,8 +3254,8 @@ function HireFlowCandidates({ showToast }) {
                       <td style={{fontFamily:"monospace"}}>{c.phone}</td>
                       <td>{processMap[c.process_id]||"—"}</td>
                       <td>{positionMap[c.position_type_id]||"—"}</td>
-                      <td><span className="badge" style={{background:stage?.is_exit_stage?`${T.purple}22`:`${T.accent}22`,color:stage?.is_exit_stage?T.purple:T.accent}}>{stage?.name||"—"}</span></td>
-                      <td>
+                      <td style={{overflow:"hidden"}}><span className="badge" style={{background:stage?.is_exit_stage?`${T.purple}22`:`${T.accent}22`,color:stage?.is_exit_stage?T.purple:T.accent,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"inline-block",maxWidth:"100%",verticalAlign:"middle"}}>{stage?.name||"—"}</span></td>
+                      <td style={{overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
                         {owner?(isOwn?"You":(<>{owner.name||owner.email}{c.pending_reassign_to&&<span style={{marginLeft:6,fontSize:10,color:T.amber,fontWeight:600}}>{c.pending_reassign_to===myUserId?"TRANSFER PENDING — YOU":"TRANSFER PENDING"}</span>}</>)):(
                           ["HR","MANAGER"].includes(role)?<button className="btn btn-sm btn-ghost" onClick={e=>{e.stopPropagation();takeCandidate(c);}}>Take</button>:"Unassigned"
                         )}
@@ -3258,7 +3348,7 @@ function ResizableTh({ col, widths, setWidths, defaultWidth, children, style }) 
     setDragging(true);
     function onMove(e2){
       const delta=e2.clientX-startX;
-      setWidths(w=>({...w,[col]:Math.max(50,width+delta)}));
+      setWidths(w=>({...w,[col]:Math.max(90,width+delta)}));
     }
     function onUp(){
       setDragging(false);
