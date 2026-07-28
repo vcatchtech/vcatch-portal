@@ -150,6 +150,8 @@ return `
   .live-dot{width:8px;height:8px;border-radius:50%;background:${t.green};display:inline-block;animation:pulse 1.5s infinite;flex-shrink:0;box-shadow:0 0 0 3px ${t.greenDim};}
   .live-dot.off{background:${t.muted};animation:none;box-shadow:none;}
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.35;}}
+  .skeleton{background:linear-gradient(90deg,${t.border} 25%,${t.mode==="light"?"#EFEDE6":"#1D2230"} 37%,${t.border} 63%);background-size:400% 100%;animation:shimmer 1.4s ease infinite;border-radius:6px;height:14px;}
+  @keyframes shimmer{0%{background-position:100% 50%;}100%{background-position:0% 50%;}}
   .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
   .three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}
   .input-row{display:flex;gap:8px;align-items:flex-end;}
@@ -325,6 +327,23 @@ function Toast({ msg, type, onClose }) {
   useEffect(() => { const t = setTimeout(onClose, 3500); return () => clearTimeout(t); }, []);
   const icons = { success:"✅", error:"❌", info:"ℹ️", warn:"⚠️" };
   return <div className="toast">{icons[type]||"ℹ️"} {msg}</div>;
+}
+
+// Placeholder rows shown while a table is loading — reads as far more
+// deliberate than a plain "Loading..." line, and matches the shape of the
+// real table so there's no layout jump once data arrives.
+function SkeletonRows({ cols, rows=5 }) {
+  return (
+    <>
+      {Array.from({length:rows}).map((_,i)=>(
+        <tr key={i}>
+          {Array.from({length:cols}).map((_,j)=>(
+            <td key={j}><div className="skeleton" style={{width:j===0?"70%":"85%"}}/></td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
 }
 
 // Searchable dropdown for filter bars — plain <select> doesn't support
@@ -1025,7 +1044,7 @@ function Campaigns({ showToast }) {
         <div className="card">
           <div className="table-wrap">
             {manualCampaigns.length===0?(
-              <div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No campaigns yet</div><div className="empty-sub">Create a campaign, upload leads, then start dialing</div></div>
+              <div className="empty-state"><div className="empty-icon">◔</div><div className="empty-title">No campaigns yet</div><div className="empty-sub">Create a campaign, upload leads, then start dialing</div></div>
             ):(
               <table>
                 <thead><tr><th>Campaign</th><th>Status</th><th>Progress</th><th>Settings</th><th>Actions</th></tr></thead>
@@ -1346,12 +1365,12 @@ function Leads({ showToast }) {
             </div>
           </div>
           <div className="table-wrap">
-            {loading?<div className="empty-state">Loading...</div>:filtered.length===0?(
-              <div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No leads found</div><div className="empty-sub">Upload a CSV to get started</div></div>
+            {!loading&&filtered.length===0?(
+              <div className="empty-state"><div className="empty-icon">☰</div><div className="empty-title">No leads found</div><div className="empty-sub">Upload a CSV to get started</div></div>
             ):(
               <table>
                 <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th>Status</th><th>Last IVR Result</th><th>Attempts</th><th>Next Eligible</th></tr></thead>
-                <tbody>{filtered.map(lead=>(
+                <tbody>{loading?<SkeletonRows cols={7}/>:filtered.map(lead=>(
                   <tr key={lead.id}>
                     <td style={{fontWeight:500}}>{lead.name}</td>
                     <td style={{fontFamily:"monospace"}}>{lead.phone}</td>
@@ -1491,12 +1510,12 @@ function InterestedCandidates({ showToast }) {
         </div>
         <div className="card">
           <div className="table-wrap">
-            {loading?<div className="empty-state">Loading...</div>:filtered.length===0?(
-              <div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No interested candidates yet</div><div className="empty-sub">Candidates who press 1 appear here</div></div>
+            {!loading&&filtered.length===0?(
+              <div className="empty-state"><div className="empty-icon">☆</div><div className="empty-title">No interested candidates yet</div><div className="empty-sub">Candidates who press 1 appear here</div></div>
             ):(
               <table>
                 <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th>Status</th><th>Last Update</th><th>By</th><th></th></tr></thead>
-                <tbody>{filtered.map((c,i)=>{const u=updates[c.phone]?.[0];return(
+                <tbody>{loading?<SkeletonRows cols={7}/>:filtered.map((c,i)=>{const u=updates[c.phone]?.[0];return(
                   <tr key={i}>
                     <td style={{fontWeight:500}}>{c.name}</td>
                     <td style={{fontFamily:"monospace"}}>{c.phone}</td>
@@ -1594,7 +1613,7 @@ function DndList({ showToast }) {
         <div className="card">
           <div className="card-header"><div className="card-title">Blocked Numbers ({dnd.length})</div><button className="btn btn-sm btn-ghost" onClick={load}>↻</button></div>
           <div className="table-wrap">
-            {dnd.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No numbers blocked</div></div>:(
+            {dnd.length===0?<div className="empty-state"><div className="empty-icon">⊘</div><div className="empty-title">No numbers blocked</div></div>:(
               <table>
                 <thead><tr><th>Name</th><th>Phone</th><th>Reason</th><th>Added</th><th></th></tr></thead>
                 <tbody>{dnd.map(d=>(
@@ -1648,7 +1667,7 @@ function CallerIds({ showToast }) {
         <div className="card">
           <div className="card-header"><div className="card-title">Your Numbers</div><button className="btn btn-sm btn-ghost" onClick={load}>↻</button></div>
           <div className="table-wrap">
-            {list.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No numbers yet</div></div>:(
+            {list.length===0?<div className="empty-state"><div className="empty-icon">☎</div><div className="empty-title">No numbers yet</div></div>:(
               <table>
                 <thead><tr><th>Number</th><th>Label</th><th>Status</th><th>Actions</th></tr></thead>
                 <tbody>{list.map(c=>(
@@ -1801,7 +1820,7 @@ function CallLogs({ showToast }) {
           <div className="card-header"><div className="card-title">Showing {display.length} of {filtered.length}</div></div>
           <div className="table-wrap">
             {loading?<div className="empty-state">Loading...</div>:display.length===0?(
-              <div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No logs match</div></div>
+              <div className="empty-state"><div className="empty-icon">▤</div><div className="empty-title">No logs match</div></div>
             ):(
               <table>
                 <thead><tr><th>Phone</th><th>Campaign</th><th>Status</th><th>Disposition</th><th>Time</th></tr></thead>
@@ -1916,10 +1935,10 @@ function UserManagement({ showToast }) {
         <div className="card">
           <div className="card-header"><div className="card-title">All Users ({users.length})</div><button className="btn btn-sm btn-ghost" onClick={load}>↻</button></div>
           <div className="table-wrap">
-            {loading?<div className="empty-state">Loading...</div>:users.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No users</div></div>:(
+            {!loading&&users.length===0?<div className="empty-state"><div className="empty-icon">◉</div><div className="empty-title">No users</div></div>:(
               <table>
                 <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Change Role</th><th>Reports To</th><th>Actions</th></tr></thead>
-                <tbody>{users.map(u=>(
+                <tbody>{loading?<SkeletonRows cols={7}/>:users.map(u=>(
                   <tr key={u.id}>
                     <td style={{fontWeight:500}}>{u.name||"—"}</td>
                     <td style={{fontFamily:"monospace",fontSize:12}}>{u.email}</td>
@@ -2011,7 +2030,7 @@ function SimpleRefList({ table, title, placeholder, showToast }) {
           <div className="field" style={{marginBottom:0,flex:1}}><label>Add New</label><input value={name} onChange={e=>setName(e.target.value)} placeholder={placeholder} onKeyDown={e=>e.key==="Enter"&&add()}/></div>
           <button className="btn btn-sm" style={{flexShrink:0}} onClick={add} disabled={adding}>{adding?"Adding...":"Add"}</button>
         </div>
-        {list.length===0?<div className="empty-state"><div className="empty-title">None yet</div></div>:(
+        {list.length===0?<div className="empty-state"><div className="empty-icon">☰</div><div className="empty-title">None yet</div></div>:(
           <table>
             <thead><tr><th>Name</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>{list.map(r=>(
@@ -2404,10 +2423,10 @@ function PositionOpenings({ showToast }) {
                 </div>
               </div>
               <div className="table-wrap">
-                {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-title">No positions here</div></div>:(
+                {!loading&&filtered.length===0?<div className="empty-state"><div className="empty-icon">▣</div><div className="empty-title">No positions here</div></div>:(
                   <table>
                     <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Status</th><th>Opened At</th><th>Closed At</th><th>Closed By</th><th>Note</th><th>Actions</th></tr></thead>
-                    <tbody>{filtered.map(o=>{
+                    <tbody>{loading?<SkeletonRows cols={12}/>:filtered.map(o=>{
                       const filled=filledCountByOpening[o.id]||0;
                       const fills=(fillsByOpening[o.id]||[]).slice().sort((a,b)=>new Date(b.filled_at||0)-new Date(a.filled_at||0));
                       const fillSummary=fills.map(c=>`${c.name} (${recruiterMap[c.filled_by]||"—"}, ${c.filled_at?new Date(c.filled_at).toLocaleDateString("en-IN"):"—"})`).join("\n");
@@ -2437,7 +2456,7 @@ function PositionOpenings({ showToast }) {
                               <button className="btn btn-sm btn-ghost" onClick={()=>closeOpening(o.id)}>Close</button>:
                               <button className="btn btn-sm btn-ghost" onClick={()=>reopenOpening(o.id)}>Reopen</button>
                             }
-                            <button className="btn btn-sm btn-ghost" style={{color:T.red,borderColor:T.red}} onClick={()=>deleteOpening(o)}>Delete</button>
+                            <button className="btn btn-sm btn-danger" onClick={()=>deleteOpening(o)}>Delete</button>
                           </td>
                         </tr>
                         {expandedOpening===o.id&&fills.length>0&&(
@@ -2450,7 +2469,7 @@ function PositionOpenings({ showToast }) {
                                     <td>{c.name}</td>
                                     <td>{recruiterMap[c.filled_by]||"—"}</td>
                                     <td>{c.filled_at?new Date(c.filled_at).toLocaleDateString("en-IN"):"—"}</td>
-                                    <td><button className="btn btn-sm btn-ghost" style={{color:T.red,borderColor:T.red}} onClick={()=>unlinkHire(c)}>Unlink</button></td>
+                                    <td><button className="btn btn-sm btn-danger" onClick={()=>unlinkHire(c)}>Unlink</button></td>
                                   </tr>
                                 ))}</tbody>
                               </table>
@@ -2544,7 +2563,7 @@ function PositionOpenings({ showToast }) {
             <div className="card">
               <div className="card-header"><div className="card-title">Closed Positions ({closedOnes.length})</div></div>
               <div className="table-wrap">
-                {closedOnes.length===0?<div className="empty-state"><div className="empty-title">No closed positions here</div></div>:(
+                {closedOnes.length===0?<div className="empty-state"><div className="empty-icon">▣</div><div className="empty-title">No closed positions here</div></div>:(
                   <table>
                     <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Opened At</th><th>Closed At</th><th>Closed By</th><th>Days to Close</th><th>Note</th><th>Actions</th></tr></thead>
                     <tbody>{closedOnes.slice().sort((a,b)=>new Date(b.closed_at)-new Date(a.closed_at)).map(o=>{
@@ -2565,7 +2584,7 @@ function PositionOpenings({ showToast }) {
                           <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={o.note||""}>{o.note||"—"}</td>
                           <td>
                             <button className="btn btn-sm btn-ghost" onClick={()=>reopenOpening(o.id)}>Reopen</button>
-                            <button className="btn btn-sm btn-ghost" style={{color:T.red,borderColor:T.red,marginLeft:6}} onClick={()=>deleteOpening(o)}>Delete</button>
+                            <button className="btn btn-sm btn-danger" style={{marginLeft:6}} onClick={()=>deleteOpening(o)}>Delete</button>
                           </td>
                         </tr>
                       );
@@ -2956,7 +2975,7 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
         <div className="card" style={{marginBottom:16,borderColor:T.red}}>
           <div className="card-header"><div className="card-title" style={{color:T.red}}>Danger Zone</div></div>
           <div className="card-body">
-            <button className="btn btn-sm btn-ghost" style={{color:T.red,borderColor:T.red}} onClick={deleteCandidate} disabled={busy}>Delete Candidate</button>
+            <button className="btn btn-sm btn-danger" onClick={deleteCandidate} disabled={busy}>Delete Candidate</button>
           </div>
         </div>
       )}
@@ -3428,7 +3447,7 @@ function HireFlowCandidates({ showToast }) {
               <option value="">Reassign to…</option>{assignableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
             </select>
             <button className="btn btn-sm" onClick={bulkAssign} disabled={bulkAssigning||!bulkAssignTo}>{bulkAssigning?"Reassigning...":"Reassign"}</button>
-            <button className="btn btn-sm btn-ghost" style={{color:T.red,borderColor:T.red}} onClick={bulkDelete} disabled={bulkDeleting}>{bulkDeleting?"Deleting...":"Delete"}</button>
+            <button className="btn btn-sm btn-danger" onClick={bulkDelete} disabled={bulkDeleting}>{bulkDeleting?"Deleting...":"Delete"}</button>
             <button className="btn btn-sm btn-ghost" style={{color:T.amber,borderColor:T.amber}} onClick={()=>bulkHighlight(true)} disabled={bulkHighlighting}>★ Highlight</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>bulkHighlight(false)} disabled={bulkHighlighting}>Remove Highlight</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>setSelectedIds([])}>Clear</button>
@@ -3438,7 +3457,7 @@ function HireFlowCandidates({ showToast }) {
         <div className="card">
           <div className="card-header"><div className="card-title">Candidates ({filtered.length})</div><div style={{display:"flex",gap:8}}>{Object.keys(colWidths).length>0&&<button className="btn btn-sm btn-ghost" onClick={()=>setColWidths({})}>Reset Columns</button>}<button className="btn btn-sm btn-ghost" onClick={exportCandidatesCSV}>Download CSV</button><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div></div>
           <div className="table-wrap">
-            {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No candidates found</div></div>:(
+            {!loading&&filtered.length===0?<div className="empty-state"><div className="empty-icon">⬡</div><div className="empty-title">No candidates found</div></div>:(
               <table style={{tableLayout:"fixed"}}>
                 <thead><tr>
                   <th style={{width:20,padding:"8px 4px"}}></th>
@@ -3454,7 +3473,7 @@ function HireFlowCandidates({ showToast }) {
                   <th style={{width:70}}>Contacted</th>
                   <ResizableTh col="lastActivity" widths={colWidths} setWidths={setColWidths} defaultWidth={110}>Last Activity</ResizableTh>
                 </tr></thead>
-                <tbody>{paged.map((c,i)=>{
+                <tbody>{loading?<SkeletonRows cols={["ADMIN","MANAGER"].includes(role)?12:11}/>:paged.map((c,i)=>{
                   const stage=stageMap[c.current_stage_id];
                   const owner=userMap[c.assigned_to];
                   const summary=activitySummary[c.id];
