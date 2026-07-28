@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 
 const SUPABASE_URL = "https://hndzvwkqveqjzaqegwmp.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhuZHp2d2txdmVxanphcWVnd21wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDc2MTksImV4cCI6MjA5Nzc4MzYxOX0.fajgDAY9JjM9jtG1BYkPqzB04hI8D96bJ0Hv5MZrIQ0";
@@ -278,6 +278,7 @@ async function dbSelect(table, params = "") { return supaFetch(`/rest/v1/${table
 async function dbInsert(table, body) { return supaFetch(`/rest/v1/${table}`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) }); }
 async function dbUpdate(table, match, body) { return supaFetch(`/rest/v1/${table}?${match}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) }); }
 async function dbDelete(table, match) { return supaFetch(`/rest/v1/${table}?${match}`, { method: "DELETE" }); }
+async function dbRpc(fn, body = {}) { return supaFetch(`/rest/v1/rpc/${fn}`, { method: "POST", body: JSON.stringify(body) }); }
 
 function downloadCSV(filename, headers, rows) {
   const bom = "\uFEFF";
@@ -476,8 +477,10 @@ function Dashboard({ showToast, role }) {
     dbSelect("user_roles","?select=id,name,email,role,manager_id,last_seen").then(setHfUsers).catch(()=>{});
     // Dialer status every 5s
     const dialerInterval=setInterval(loadDialerStatus,5000);
-    // Full dashboard auto-refresh every 30s
-    const refreshInterval=setInterval(loadStats,30000);
+    // Full dashboard auto-refresh every 30s — IVR and Hire Flow both, so two
+    // open tabs (e.g. Admin and CEO) don't silently drift out of sync until
+    // someone manually hits refresh.
+    const refreshInterval=setInterval(()=>{loadStats();loadHireFlowSummary();},30000);
     // Presence refresh every 30s, so "Currently Active" doesn't need a manual reload
     const presenceInterval=setInterval(()=>{
       dbSelect("user_roles","?select=id,name,email,role,manager_id,last_seen").then(setHfUsers).catch(()=>{});
@@ -594,6 +597,7 @@ function Dashboard({ showToast, role }) {
 
   async function sendTestCall(){
     if(!testPhone.trim()){showToast("Enter a phone number","error");return;}
+    if(!window.confirm(`This bypasses the DND list — ${testPhone} will be called even if they've opted out. Continue?`))return;
     setTestLoading(true);
     try{
       await renderFetch("/test-call",{method:"POST",body:JSON.stringify({phone:testPhone.trim(),campaign:"TEST",bypass_dnd:true})});
@@ -1410,7 +1414,7 @@ function InterestedCandidates({ showToast }) {
 
   const [forceDialing,setForceDialing]=useState(null);
   async function forceDial(phone){
-    if(!window.confirm(`Force dial ${phone}? This bypasses the "already interested" protection.`)) return;
+    if(!window.confirm(`Force dial ${phone}? This bypasses both the "already interested" protection and the DND list.`)) return;
     setForceDialing(phone);
     try{
       await renderFetch("/test-call",{method:"POST",body:JSON.stringify({phone,campaign:"FORCE_REDIAL",bypass_dnd:true})});
@@ -2166,11 +2170,13 @@ function PositionOpenings({ showToast }) {
   const [recruiters,setRecruiters]=useState([]);
   const [hiredCandidates,setHiredCandidates]=useState([]);
   const [linkChoice,setLinkChoice]=useState({});
+  const [expandedOpening,setExpandedOpening]=useState(null);
   const [loading,setLoading]=useState(false);
   const [statusFilter,setStatusFilter]=useState("OPEN");
   const [form,setForm]=useState({company_id:"",process_id:"",position_type_id:"",target_count:1,note:""});
   const [creating,setCreating]=useState(false);
   const myUserId=useRef(null);
+  const hiredStageIdRef=useRef(null);
 
   useEffect(()=>{load();},[]);
 
@@ -2183,13 +2189,19 @@ function PositionOpenings({ showToast }) {
         dbSelect("processes","?select=*&order=name"),
         dbSelect("position_types","?select=*&order=name"),
         dbSelect("user_roles","?select=id,name,email"),
-        dbSelect("candidates","?select=id,name,filled_opening_id,filled_at,filled_by&filled_opening_id=not.is.null"),
+        dbSelect("candidates","?select=id,name,current_stage_id,filled_opening_id,filled_at,filled_by&filled_opening_id=not.is.null"),
         dbSelect("funnel_stages","?select=id,name"),
       ]);
-      setOpenings(ops);setCompanies(comps);setProcesses(procs);setPositionTypes(posTypes);setCandidates(cands);setRecruiters(users);
+      setOpenings(ops);setCompanies(comps);setProcesses(procs);setPositionTypes(posTypes);setRecruiters(users);
       const me=users.find(u=>u.email===getEmail());
       myUserId.current=me?.id||null;
       const hiredStageId=stages.find(s=>s.name==="Hired")?.id;
+      hiredStageIdRef.current=hiredStageId||null;
+      // A candidate only counts as "filled" against an opening while they're
+      // still actually in the Hired stage — if a hire gets corrected or
+      // rescinded later, they stop counting automatically instead of
+      // inflating the opening's fill count forever.
+      setCandidates(hiredStageId?cands.filter(c=>c.current_stage_id===hiredStageId):cands);
       if(hiredStageId){
         setHiredCandidates(await dbSelect("candidates",`?select=id,name,phone&current_stage_id=eq.${hiredStageId}&filled_opening_id=is.null`));
       }
@@ -2224,13 +2236,44 @@ function PositionOpenings({ showToast }) {
         remark:`Linked to opening: ${companyMap[opening.company_id]} / ${processMap[opening.process_id]} / ${positionMap[opening.position_type_id]}`,
         changed_by:myUserId.current,
       });
-      showToast("Linked","success");load();
+      const newCount=(filledCountByOpening[openingId]||0)+1;
+      if(opening.status==="OPEN"&&newCount>=opening.target_count){
+        await dbUpdate("position_openings",`id=eq.${openingId}`,{status:"CLOSED",closed_at:new Date().toISOString(),closed_by:myUserId.current});
+        showToast(`Linked — target headcount reached, position auto-closed`,"success");
+      }else{
+        showToast("Linked","success");
+      }
+      load();
     }catch{showToast("Failed to link","error");}
+  }
+
+  async function deleteOpening(o){
+    const filled=filledCountByOpening[o.id]||0;
+    if(filled>0){showToast("Unlink all filled candidates from this opening before deleting it","error");return;}
+    if(!window.confirm(`Permanently delete this ${o.status==="OPEN"?"open":"closed"} requisition (${openingLabelFor(o)})? This cannot be undone.`))return;
+    try{
+      await dbDelete("position_openings",`id=eq.${o.id}`);
+      showToast("Position deleted","success");load();
+    }catch{showToast("Failed to delete — it may still have linked candidates","error");}
+  }
+
+  async function unlinkHire(candidate){
+    if(!window.confirm(`Unlink ${candidate.name} from this opening? They'll no longer count toward its Filled total, and will show up in Unlinked Hires again if still marked Hired.`))return;
+    try{
+      await dbUpdate("candidates",`id=eq.${candidate.id}`,{filled_opening_id:null,filled_at:null,filled_by:null});
+      await dbInsert("candidate_activity",{
+        candidate_id:candidate.id,type:"NOTE",is_contact_attempt:false,
+        remark:"Unlinked from opening",changed_by:myUserId.current,
+      });
+      showToast("Unlinked","success");load();
+    }catch{showToast("Failed to unlink","error");}
   }
 
   async function createOpening(){
     if(!form.company_id||!form.process_id||!form.position_type_id){showToast("Pick company, process, and position","error");return;}
     if(!form.target_count||form.target_count<1){showToast("Target headcount must be at least 1","error");return;}
+    const dupe=openings.find(o=>o.status==="OPEN"&&o.company_id===form.company_id&&o.process_id===form.process_id&&o.position_type_id===form.position_type_id);
+    if(dupe){showToast("An OPEN requisition for this exact Company/Process/Position already exists — add to its target instead of opening a duplicate","error");return;}
     setCreating(true);
     try{
       await dbInsert("position_openings",{
@@ -2240,7 +2283,7 @@ function PositionOpenings({ showToast }) {
       showToast("Position opened","success");
       setForm({company_id:"",process_id:"",position_type_id:"",target_count:1,note:""});
       load();
-    }catch{showToast("Failed to open position — may already exist","error");}
+    }catch{showToast("Failed to open position","error");}
     finally{setCreating(false);}
   }
 
@@ -2394,12 +2437,18 @@ function PositionOpenings({ showToast }) {
                       const fills=(fillsByOpening[o.id]||[]).slice().sort((a,b)=>new Date(b.filled_at||0)-new Date(a.filled_at||0));
                       const fillSummary=fills.map(c=>`${c.name} (${recruiterMap[c.filled_by]||"—"}, ${c.filled_at?new Date(c.filled_at).toLocaleDateString("en-IN"):"—"})`).join("\n");
                       return(
-                        <tr key={o.id}>
+                        <Fragment key={o.id}>
+                        <tr>
                           <td style={{fontWeight:500}}>{companyMap[o.company_id]||"—"}</td>
                           <td>{processMap[o.process_id]||"—"}</td>
                           <td>{positionMap[o.position_type_id]||"—"}</td>
                           <td>{o.target_count}</td>
-                          <td style={{color:filled>=o.target_count?T.green:undefined,fontWeight:filled>=o.target_count?600:undefined}}>{filled}</td>
+                          <td>
+                            <span
+                              style={{color:filled>=o.target_count?T.green:undefined,fontWeight:filled>=o.target_count?600:undefined,cursor:fills.length?"pointer":"default",textDecoration:fills.length?"underline dotted":"none"}}
+                              onClick={()=>fills.length&&setExpandedOpening(v=>v===o.id?null:o.id)}
+                            >{filled}</span>
+                          </td>
                           <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={fillSummary}>
                             {fills.length?[...new Set(fills.map(c=>recruiterMap[c.filled_by]||"—"))].join(", "):"—"}
                           </td>
@@ -2408,13 +2457,32 @@ function PositionOpenings({ showToast }) {
                           <td style={{fontSize:12,color:T.muted}}>{o.closed_at?new Date(o.closed_at).toLocaleDateString("en-IN"):"—"}</td>
                           <td style={{fontSize:12,color:T.muted}}>{o.closed_by?recruiterMap[o.closed_by]||"—":"—"}</td>
                           <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={o.note||""}>{o.note||"—"}</td>
-                          <td>
+                          <td style={{display:"flex",gap:6}}>
                             {o.status==="OPEN"?
                               <button className="btn btn-sm btn-ghost" onClick={()=>closeOpening(o.id)}>Close</button>:
                               <button className="btn btn-sm btn-ghost" onClick={()=>reopenOpening(o.id)}>Reopen</button>
                             }
+                            <button className="btn btn-sm btn-ghost" style={{color:T.red,borderColor:T.red}} onClick={()=>deleteOpening(o)}>Delete</button>
                           </td>
                         </tr>
+                        {expandedOpening===o.id&&fills.length>0&&(
+                          <tr key={o.id+"-fills"}>
+                            <td colSpan={12} style={{background:T.mode==="light"?"#FAFAFF":"#181D2A",padding:12}}>
+                              <table style={{width:"100%"}}>
+                                <thead><tr><th>Candidate</th><th>Filled By</th><th>Filled At</th><th>Actions</th></tr></thead>
+                                <tbody>{fills.map(c=>(
+                                  <tr key={c.id}>
+                                    <td>{c.name}</td>
+                                    <td>{recruiterMap[c.filled_by]||"—"}</td>
+                                    <td>{c.filled_at?new Date(c.filled_at).toLocaleDateString("en-IN"):"—"}</td>
+                                    <td><button className="btn btn-sm btn-ghost" style={{color:T.red,borderColor:T.red}} onClick={()=>unlinkHire(c)}>Unlink</button></td>
+                                  </tr>
+                                ))}</tbody>
+                              </table>
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       );
                     })}</tbody>
                   </table>
@@ -2557,7 +2625,19 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
         remark:remarkParts.length?remarkParts.join(" — "):null,
         changed_by:myUserId,
       });
-      showToast("Stage updated","success");setStageRemark("");setRejectionReasonId("");setInterviewAt("");setSelectedOpeningId("");
+      if(newStageIsHired&&selectedOpeningId){
+        const opening=openOpenings.find(o=>o.id===selectedOpeningId);
+        const filledNow=await dbSelect("candidates",`?select=id&filled_opening_id=eq.${selectedOpeningId}`);
+        if(opening&&filledNow.length>=opening.target_count){
+          await dbUpdate("position_openings",`id=eq.${selectedOpeningId}`,{status:"CLOSED",closed_at:new Date().toISOString(),closed_by:myUserId});
+          showToast("Stage updated — target headcount reached, position auto-closed","success");
+        }else{
+          showToast("Stage updated","success");
+        }
+      }else{
+        showToast("Stage updated","success");
+      }
+      setStageRemark("");setRejectionReasonId("");setInterviewAt("");setSelectedOpeningId("");
       onChanged();loadActivity();
     }catch{showToast("Failed to update stage","error");}
     finally{setBusy(false);}
@@ -3278,7 +3358,7 @@ function HireFlowCandidates({ showToast }) {
         )}
 
         <div className="card">
-          <div className="card-header"><div className="card-title">Candidates ({filtered.length})</div><div style={{display:"flex",gap:8}}><button className="btn btn-sm btn-ghost" onClick={exportCandidatesCSV}>Download CSV</button><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div></div>
+          <div className="card-header"><div className="card-title">Candidates ({filtered.length})</div><div style={{display:"flex",gap:8}}>{Object.keys(colWidths).length>0&&<button className="btn btn-sm btn-ghost" onClick={()=>setColWidths({})}>Reset Columns</button>}<button className="btn btn-sm btn-ghost" onClick={exportCandidatesCSV}>Download CSV</button><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div></div>
           <div className="table-wrap">
             {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No candidates found</div></div>:(
               <table style={{tableLayout:"fixed"}}>
@@ -3597,7 +3677,7 @@ export default function App() {
     const saved=localStorage.getItem("sb_page");
     return getRole()==="CEO"?(CEO_PAGES.includes(saved)?saved:"dashboard"):(saved||"dashboard");
   });
-  const [toast,setToast]=useState(null);
+  const [toasts,setToasts]=useState([]);
   const [role,setRole]=useState(()=>getRole());
 
   useEffect(()=>{
@@ -3628,7 +3708,7 @@ export default function App() {
     if(styleEl) styleEl.textContent = getThemeCSS(T);
   },[isDark]);
 
-  function showToast(msg,type="info"){setToast({msg,type});}
+  function showToast(msg,type="info"){setToasts(q=>[...q,{id:Date.now()+Math.random(),msg,type}]);}
 
   async function handleLogin(s){
     setSession(s);
@@ -3649,9 +3729,7 @@ export default function App() {
   useEffect(()=>{
     if(!session)return;
     function ping(){
-      const email=getEmail();
-      if(!email)return;
-      dbUpdate("user_roles",`email=eq.${encodeURIComponent(email)}`,{last_seen:new Date().toISOString()}).catch(()=>{});
+      dbRpc("update_own_last_seen").catch(()=>{});
     }
     ping();
     const interval=setInterval(ping,60000);
@@ -3673,18 +3751,18 @@ export default function App() {
   );
 
   const allNav=[
-    {id:"dashboard",label:"Dashboard",icon:"",roles:["ADMIN","MANAGER","HR","CEO"]},
-    {id:"hireflow",label:"Hire Flow",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"openings",label:"Position Openings",icon:"",roles:["ADMIN","MANAGER","CEO"]},
-    {id:"campaigns",label:"IVR Campaigns",icon:"",roles:["ADMIN","MANAGER"]},
-    {id:"leads",label:"Leads",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"interested",label:"IVR Interested Candidates",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"dnd",label:"IVR DND List",icon:"",roles:["ADMIN","MANAGER"]},
-    {id:"callerids",label:"IVR Caller IDs",icon:"",roles:["ADMIN","MANAGER"]},
-    {id:"audio",label:"IVR Audio Manager",icon:"",roles:["ADMIN","MANAGER"]},
-    {id:"logs",label:"IVR Call Logs",icon:"",roles:["ADMIN","MANAGER","HR"]},
-    {id:"hireflow-settings",label:"Settings",icon:"",roles:["ADMIN","MANAGER"]},
-    {id:"users",label:"Users",icon:"",roles:["ADMIN"]},
+    {id:"dashboard",label:"Dashboard",icon:"▦",roles:["ADMIN","MANAGER","HR","CEO"]},
+    {id:"hireflow",label:"Hire Flow",icon:"⬡",roles:["ADMIN","MANAGER","HR"]},
+    {id:"openings",label:"Position Openings",icon:"▣",roles:["ADMIN","MANAGER","CEO"]},
+    {id:"campaigns",label:"IVR Campaigns",icon:"◔",roles:["ADMIN","MANAGER"]},
+    {id:"leads",label:"Leads",icon:"☰",roles:["ADMIN","MANAGER","HR"]},
+    {id:"interested",label:"IVR Interested Candidates",icon:"☆",roles:["ADMIN","MANAGER","HR"]},
+    {id:"dnd",label:"IVR DND List",icon:"⊘",roles:["ADMIN","MANAGER"]},
+    {id:"callerids",label:"IVR Caller IDs",icon:"☎",roles:["ADMIN","MANAGER"]},
+    {id:"audio",label:"IVR Audio Manager",icon:"♪",roles:["ADMIN","MANAGER"]},
+    {id:"logs",label:"IVR Call Logs",icon:"▤",roles:["ADMIN","MANAGER","HR"]},
+    {id:"hireflow-settings",label:"Settings",icon:"⚙",roles:["ADMIN","MANAGER"]},
+    {id:"users",label:"Users",icon:"◉",roles:["ADMIN"]},
   ];
 
   const nav=allNav.filter(n=>n.roles.includes(role));
@@ -3709,7 +3787,7 @@ export default function App() {
             <div className="nav-section">Menu</div>
             {nav.map(n=>(
               <div key={n.id} className={`nav-item ${page===n.id?"active":""}`} onClick={()=>{setPage(n.id);localStorage.setItem("sb_page",n.id);}}>
-                {n.label}
+                <span className="nav-icon">{n.icon}</span>{n.label}
               </div>
             ))}
           </nav>
@@ -3746,7 +3824,7 @@ export default function App() {
           {page==="openings"&&["ADMIN","MANAGER","CEO"].includes(role)&&<PositionOpenings showToast={showToast}/>}
         </div>
       </div>
-      {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+      {toasts[0]&&<Toast key={toasts[0].id} msg={toasts[0].msg} type={toasts[0].type} onClose={()=>setToasts(q=>q.slice(1))}/>}
     </>
   );
 }
