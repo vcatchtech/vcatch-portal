@@ -2377,82 +2377,6 @@ function PositionOpenings({ showToast }) {
               <div className="kpi-card"><div className="kpi-label">Avg Days to Close</div><div className="kpi-value blue">{avgDaysToClose!==null?avgDaysToClose.toFixed(1):"—"}</div><div className="kpi-sub">Across {closedOnes.length} closed position{closedOnes.length===1?"":"s"}</div></div>
             </div>
 
-            {closedOnes.length>0&&(
-              <div className="two-col" style={{marginBottom:16}}>
-                <div className="card">
-                  <div className="card-header"><div className="card-title">Avg Days to Close — by Process</div></div>
-                  <div className="table-wrap"><table>
-                    <thead><tr><th>Process</th><th>Closed</th><th>Avg Days</th></tr></thead>
-                    <tbody>{avgByProcess.map(r=><tr key={r.label}><td>{r.label}</td><td>{r.count}</td><td>{r.avgDays.toFixed(1)}</td></tr>)}</tbody>
-                  </table></div>
-                </div>
-                <div className="card">
-                  <div className="card-header"><div className="card-title">Avg Days to Close — by Position</div></div>
-                  <div className="table-wrap"><table>
-                    <thead><tr><th>Position</th><th>Closed</th><th>Avg Days</th></tr></thead>
-                    <tbody>{avgByPosition.map(r=><tr key={r.label}><td>{r.label}</td><td>{r.count}</td><td>{r.avgDays.toFixed(1)}</td></tr>)}</tbody>
-                  </table></div>
-                </div>
-              </div>
-            )}
-
-            <div className="card" style={{marginBottom:16}}>
-              <div className="card-header"><div className="card-title">Open a New Position</div></div>
-              <div className="card-body">
-                <div className="two-col" style={{marginBottom:12}}>
-                  <div className="field"><label>Company *</label>
-                    <select value={form.company_id} onChange={e=>setForm({...form,company_id:e.target.value})}>
-                      <option value="">—</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="field"><label>Process *</label>
-                    <select value={form.process_id} onChange={e=>setForm({...form,process_id:e.target.value})}>
-                      <option value="">—</option>{processes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="two-col" style={{marginBottom:12}}>
-                  <div className="field"><label>Position Type *</label>
-                    <select value={form.position_type_id} onChange={e=>setForm({...form,position_type_id:e.target.value})}>
-                      <option value="">—</option>{positionTypes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="field"><label>Target Headcount *</label>
-                    <input type="number" min="1" value={form.target_count} onChange={e=>setForm({...form,target_count:e.target.value})}/>
-                  </div>
-                </div>
-                <div className="field" style={{marginBottom:12}}><label>Note (optional)</label><input value={form.note} onChange={e=>setForm({...form,note:e.target.value})} placeholder="e.g. Urgent — July batch"/></div>
-                <button className="btn btn-sm" onClick={createOpening} disabled={creating}>{creating?"Opening...":"Open Position"}</button>
-              </div>
-            </div>
-
-            {hiredCandidates.length>0&&(
-              <div className="card" style={{marginBottom:16}}>
-                <div className="card-header">
-                  <div className="card-title">Unlinked Hires ({hiredCandidates.length})</div>
-                  <span style={{fontSize:12,color:T.muted}}>Hired candidates not yet counted against any opening</span>
-                </div>
-                <div className="table-wrap">
-                  <table>
-                    <thead><tr><th>Name</th><th>Phone</th><th>Fills Which Opening?</th><th>Actions</th></tr></thead>
-                    <tbody>{hiredCandidates.map(c=>(
-                      <tr key={c.id}>
-                        <td style={{fontWeight:500}}>{c.name}</td>
-                        <td style={{fontFamily:"monospace"}}>{c.phone}</td>
-                        <td>
-                          <select className="filter-select" value={linkChoice[c.id]||""} onChange={e=>setLinkChoice({...linkChoice,[c.id]:e.target.value})}>
-                            <option value="">—</option>
-                            {openOptions.map(o=><option key={o.id} value={o.id}>{openingLabelFor(o)}</option>)}
-                          </select>
-                        </td>
-                        <td><button className="btn btn-sm btn-ghost" onClick={()=>linkHire(c.id)}>Link</button></td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
             <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
               <FilterSelect value={companyFilter} onChange={setCompanyFilter} allLabel="All Companies" options={companies.map(c=>({value:c.id,label:c.name}))}/>
               <FilterSelect value={processFilter} onChange={setProcessFilter} allLabel="All Processes" options={processes.map(p=>({value:p.id,label:p.name}))}/>
@@ -2467,7 +2391,7 @@ function PositionOpenings({ showToast }) {
               )}
             </div>
 
-            <div className="card">
+            <div className="card" style={{marginBottom:16}}>
               <div className="card-header">
                 <div className="card-title">Positions ({filtered.length})</div>
                 <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -2534,6 +2458,116 @@ function PositionOpenings({ showToast }) {
                           </tr>
                         )}
                         </Fragment>
+                      );
+                    })}</tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+
+            <div className="card" style={{marginBottom:16}}>
+              <div className="card-header"><div className="card-title">Open a New Position</div></div>
+              <div className="card-body">
+                <div className="two-col" style={{marginBottom:12}}>
+                  <div className="field"><label>Company *</label>
+                    <select value={form.company_id} onChange={e=>setForm({...form,company_id:e.target.value})}>
+                      <option value="">—</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="field"><label>Process *</label>
+                    <select value={form.process_id} onChange={e=>setForm({...form,process_id:e.target.value})}>
+                      <option value="">—</option>{processes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="two-col" style={{marginBottom:12}}>
+                  <div className="field"><label>Position Type *</label>
+                    <select value={form.position_type_id} onChange={e=>setForm({...form,position_type_id:e.target.value})}>
+                      <option value="">—</option>{positionTypes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="field"><label>Target Headcount *</label>
+                    <input type="number" min="1" value={form.target_count} onChange={e=>setForm({...form,target_count:e.target.value})}/>
+                  </div>
+                </div>
+                <div className="field" style={{marginBottom:12}}><label>Note (optional)</label><input value={form.note} onChange={e=>setForm({...form,note:e.target.value})} placeholder="e.g. Urgent — July batch"/></div>
+                <button className="btn btn-sm" onClick={createOpening} disabled={creating}>{creating?"Opening...":"Open Position"}</button>
+              </div>
+            </div>
+
+            {hiredCandidates.length>0&&(
+              <div className="card" style={{marginBottom:16}}>
+                <div className="card-header">
+                  <div className="card-title">Unlinked Hires ({hiredCandidates.length})</div>
+                  <span style={{fontSize:12,color:T.muted}}>Hired candidates not yet counted against any opening</span>
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Name</th><th>Phone</th><th>Fills Which Opening?</th><th>Actions</th></tr></thead>
+                    <tbody>{hiredCandidates.map(c=>(
+                      <tr key={c.id}>
+                        <td style={{fontWeight:500}}>{c.name}</td>
+                        <td style={{fontFamily:"monospace"}}>{c.phone}</td>
+                        <td>
+                          <select className="filter-select" value={linkChoice[c.id]||""} onChange={e=>setLinkChoice({...linkChoice,[c.id]:e.target.value})}>
+                            <option value="">—</option>
+                            {openOptions.map(o=><option key={o.id} value={o.id}>{openingLabelFor(o)}</option>)}
+                          </select>
+                        </td>
+                        <td><button className="btn btn-sm btn-ghost" onClick={()=>linkHire(c.id)}>Link</button></td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {closedOnes.length>0&&(
+              <div className="two-col" style={{marginBottom:16}}>
+                <div className="card">
+                  <div className="card-header"><div className="card-title">Avg Days to Close — by Process</div></div>
+                  <div className="table-wrap"><table>
+                    <thead><tr><th>Process</th><th>Closed</th><th>Avg Days</th></tr></thead>
+                    <tbody>{avgByProcess.map(r=><tr key={r.label}><td>{r.label}</td><td>{r.count}</td><td>{r.avgDays.toFixed(1)}</td></tr>)}</tbody>
+                  </table></div>
+                </div>
+                <div className="card">
+                  <div className="card-header"><div className="card-title">Avg Days to Close — by Position</div></div>
+                  <div className="table-wrap"><table>
+                    <thead><tr><th>Position</th><th>Closed</th><th>Avg Days</th></tr></thead>
+                    <tbody>{avgByPosition.map(r=><tr key={r.label}><td>{r.label}</td><td>{r.count}</td><td>{r.avgDays.toFixed(1)}</td></tr>)}</tbody>
+                  </table></div>
+                </div>
+              </div>
+            )}
+
+            <div className="card">
+              <div className="card-header"><div className="card-title">Closed Positions ({closedOnes.length})</div></div>
+              <div className="table-wrap">
+                {closedOnes.length===0?<div className="empty-state"><div className="empty-title">No closed positions here</div></div>:(
+                  <table>
+                    <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Opened At</th><th>Closed At</th><th>Closed By</th><th>Days to Close</th><th>Note</th><th>Actions</th></tr></thead>
+                    <tbody>{closedOnes.slice().sort((a,b)=>new Date(b.closed_at)-new Date(a.closed_at)).map(o=>{
+                      const filled=filledCountByOpening[o.id]||0;
+                      const fills=fillsByOpening[o.id]||[];
+                      return(
+                        <tr key={o.id}>
+                          <td style={{fontWeight:500}}>{companyMap[o.company_id]||"—"}</td>
+                          <td>{processMap[o.process_id]||"—"}</td>
+                          <td>{positionMap[o.position_type_id]||"—"}</td>
+                          <td>{o.target_count}</td>
+                          <td>{filled}</td>
+                          <td style={{fontSize:12,color:T.muted}}>{fills.length?[...new Set(fills.map(c=>recruiterMap[c.filled_by]||"—"))].join(", "):"—"}</td>
+                          <td style={{fontSize:12,color:T.muted}}>{new Date(o.created_at).toLocaleDateString("en-IN")}</td>
+                          <td style={{fontSize:12,color:T.muted}}>{new Date(o.closed_at).toLocaleDateString("en-IN")}</td>
+                          <td style={{fontSize:12,color:T.muted}}>{o.closed_by?recruiterMap[o.closed_by]||"—":"—"}</td>
+                          <td>{daysToClose(o).toFixed(1)}</td>
+                          <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={o.note||""}>{o.note||"—"}</td>
+                          <td>
+                            <button className="btn btn-sm btn-ghost" onClick={()=>reopenOpening(o.id)}>Reopen</button>
+                            <button className="btn btn-sm btn-ghost" style={{color:T.red,borderColor:T.red,marginLeft:6}} onClick={()=>deleteOpening(o)}>Delete</button>
+                          </td>
+                        </tr>
                       );
                     })}</tbody>
                   </table>
