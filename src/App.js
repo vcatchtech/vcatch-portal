@@ -473,12 +473,16 @@ function Dashboard({ showToast, role }) {
   useEffect(()=>{
     loadAll();
     dbSelect("campaigns","?select=name&order=created_at.desc").then(setCampaignList).catch(()=>{});
-    dbSelect("user_roles","?select=id,name,email,role,manager_id").then(setHfUsers).catch(()=>{});
+    dbSelect("user_roles","?select=id,name,email,role,manager_id,last_seen").then(setHfUsers).catch(()=>{});
     // Dialer status every 5s
     const dialerInterval=setInterval(loadDialerStatus,5000);
     // Full dashboard auto-refresh every 30s
     const refreshInterval=setInterval(loadStats,30000);
-    return()=>{clearInterval(dialerInterval);clearInterval(refreshInterval);};
+    // Presence refresh every 30s, so "Currently Active" doesn't need a manual reload
+    const presenceInterval=setInterval(()=>{
+      dbSelect("user_roles","?select=id,name,email,role,manager_id,last_seen").then(setHfUsers).catch(()=>{});
+    },30000);
+    return()=>{clearInterval(dialerInterval);clearInterval(refreshInterval);clearInterval(presenceInterval);};
   },[]);
   useEffect(()=>{loadStats();},[dateFrom,dateTo,campaignFilter]);
   useEffect(()=>{loadHireFlowSummary();},[hfDateFrom,hfDateTo,hfAssignedTo,hfMyUserId]);
@@ -668,6 +672,24 @@ function Dashboard({ showToast, role }) {
         <button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button>
       </div>
       <div className="page-content">
+        {["ADMIN","MANAGER"].includes(role)&&(()=>{
+          const now=Date.now();
+          const ONLINE_MS=3*60*1000; // heartbeat pings every 60s, so 3 min covers a couple missed beats
+          const online=hfUsers.filter(u=>u.last_seen&&(now-new Date(u.last_seen).getTime())<ONLINE_MS);
+          return(
+            <div className="card" style={{marginBottom:20}}>
+              <div className="card-header"><div className="card-title">Currently Active</div><span style={{fontSize:12,color:T.muted}}>{online.length} online now</span></div>
+              <div className="card-body" style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {online.length?online.map(u=>(
+                  <span key={u.id} className="badge badge-green" style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{width:6,height:6,borderRadius:"50%",background:T.green,display:"inline-block"}}/>
+                    {u.name||u.email}
+                  </span>
+                )):<span style={{fontSize:13,color:T.muted}}>No one active right now</span>}
+              </div>
+            </div>
+          );
+        })()}
         {/* HireFlow Overview */}
         {hfSummary&&(
           <div style={{marginBottom:28}}>
@@ -3574,6 +3596,20 @@ export default function App() {
   }
 
   function toggleTheme(){setIsDark(d=>!d);}
+
+  // Lightweight presence heartbeat — no realtime layer, just a timestamp
+  // read elsewhere as "online if updated in the last few minutes".
+  useEffect(()=>{
+    if(!session)return;
+    function ping(){
+      const email=getEmail();
+      if(!email)return;
+      dbUpdate("user_roles",`email=eq.${encodeURIComponent(email)}`,{last_seen:new Date().toISOString()}).catch(()=>{});
+    }
+    ping();
+    const interval=setInterval(ping,60000);
+    return()=>clearInterval(interval);
+  },[session]);
 
   if(isRecovery) return (
     <>
