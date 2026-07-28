@@ -2900,6 +2900,7 @@ function HireFlowCandidates({ showToast }) {
   const [bulkAssignTo,setBulkAssignTo]=useState("");
   const [bulkAssigning,setBulkAssigning]=useState(false);
   const [bulkDeleting,setBulkDeleting]=useState(false);
+  const [bulkHighlighting,setBulkHighlighting]=useState(false);
   const fileRef=useRef();
 
   const [pageTab,setPageTab]=useState("pipeline");
@@ -3104,6 +3105,13 @@ function HireFlowCandidates({ showToast }) {
     finally{setUploading(false);if(fileRef.current)fileRef.current.value="";}
   }
 
+  async function toggleHighlight(c){
+    const next=!c.highlighted;
+    setCandidates(prev=>prev.map(x=>x.id===c.id?{...x,highlighted:next}:x));
+    try{await dbUpdate("candidates",`id=eq.${c.id}`,{highlighted:next});}
+    catch{setCandidates(prev=>prev.map(x=>x.id===c.id?{...x,highlighted:!next}:x));showToast("Failed to update highlight","error");}
+  }
+
   async function takeCandidate(c){
     try{
       await dbUpdate("candidates",`id=eq.${c.id}`,{assigned_to:myUserId,assigned_at:new Date().toISOString(),updated_at:new Date().toISOString()});
@@ -3146,6 +3154,19 @@ function HireFlowCandidates({ showToast }) {
       loadAll();
     }catch{showToast("Failed to delete","error");}
     finally{setBulkDeleting(false);}
+  }
+
+  async function bulkHighlight(state){
+    if(!selectedIds.length)return;
+    setBulkHighlighting(true);
+    try{
+      const idList=selectedIds.join(",");
+      await dbUpdate("candidates",`id=in.(${idList})`,{highlighted:state});
+      setCandidates(prev=>prev.map(c=>selectedIds.includes(c.id)?{...c,highlighted:state}:c));
+      showToast(`${selectedIds.length} candidates ${state?"highlighted":"unhighlighted"}`,"success");
+      setSelectedIds([]);
+    }catch{showToast("Failed to update highlight","error");}
+    finally{setBulkHighlighting(false);}
   }
 
   function toggleSelect(id){
@@ -3250,6 +3271,8 @@ function HireFlowCandidates({ showToast }) {
             </select>
             <button className="btn btn-sm" onClick={bulkAssign} disabled={bulkAssigning||!bulkAssignTo}>{bulkAssigning?"Reassigning...":"Reassign"}</button>
             <button className="btn btn-sm btn-ghost" style={{color:T.red,borderColor:T.red}} onClick={bulkDelete} disabled={bulkDeleting}>{bulkDeleting?"Deleting...":"Delete"}</button>
+            <button className="btn btn-sm btn-ghost" style={{color:T.amber,borderColor:T.amber}} onClick={()=>bulkHighlight(true)} disabled={bulkHighlighting}>★ Highlight</button>
+            <button className="btn btn-sm btn-ghost" onClick={()=>bulkHighlight(false)} disabled={bulkHighlighting}>Remove Highlight</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>setSelectedIds([])}>Clear</button>
           </div>
         )}
@@ -3260,6 +3283,7 @@ function HireFlowCandidates({ showToast }) {
             {loading?<div className="empty-state">Loading...</div>:filtered.length===0?<div className="empty-state"><div className="empty-icon"></div><div className="empty-title">No candidates found</div></div>:(
               <table style={{tableLayout:"fixed"}}>
                 <thead><tr>
+                  <th style={{width:20,padding:"8px 4px"}}></th>
                   <th style={{width:22,padding:"8px 4px"}}>#</th>
                   {["ADMIN","MANAGER"].includes(role)&&<th style={{width:22,padding:"8px 4px"}}></th>}
                   <ResizableTh col="name" widths={colWidths} setWidths={setColWidths} defaultWidth={130}>Name</ResizableTh>
@@ -3283,9 +3307,12 @@ function HireFlowCandidates({ showToast }) {
                   // same amber tint, drowning out the "your case" highlight and
                   // reading as an unintentional color glitch. The "— STALE" text
                   // on Last Activity already carries that signal on its own.
-                  const rowBg=isOwn?`${T.accent}14`:"transparent";
+                  const rowBg=c.highlighted?`${T.amber}22`:isOwn?`${T.accent}14`:"transparent";
                   return(
                     <tr key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer",background:rowBg}}>
+                      <td style={{padding:"6px 4px"}} onClick={e=>{e.stopPropagation();toggleHighlight(c);}} title={c.highlighted?"Unhighlight":"Highlight"}>
+                        <span style={{cursor:"pointer",fontSize:14,color:c.highlighted?T.amber:T.border}}>★</span>
+                      </td>
                       <td style={{color:T.muted,fontSize:12,padding:"6px 4px"}}>{(pageSafe-1)*pageSize+i+1}</td>
                       {["ADMIN","MANAGER"].includes(role)&&(
                         <td style={{padding:"6px 4px"}} onClick={e=>e.stopPropagation()}>
