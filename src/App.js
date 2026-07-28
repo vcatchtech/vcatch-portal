@@ -32,10 +32,10 @@ const DARK = {
   inputBg:"#12151D", shadow:"rgba(0,0,0,0.35)", shadowLg:"rgba(0,0,0,0.55)", mode:"dark",
 };
 const LIGHT = {
-  bg:"#EBE8DF", surface:"#FFFDF9", card:"#FFFDF9", border:"#E4E1D8",
-  accent:"#4548B0", accentDim:"#ECEDFB", green:"#177A5C", greenDim:"#E6F7F0",
-  red:"#B93F41", redDim:"#FBEDED", amber:"#A06E22", amberDim:"#FBF1DE",
-  purple:"#6740AA", purpleDim:"#F3EEFC", text:"#1C1B18", muted:"#6E6C64",
+  bg:"#F6F4EF", surface:"#FFFDF9", card:"#FFFDF9", border:"#E4E1D8",
+  accent:"#4F52D9", accentDim:"#ECEDFB", green:"#0E8F63", greenDim:"#E6F7F0",
+  red:"#D23C3F", redDim:"#FBEDED", amber:"#B8790A", amberDim:"#FBF1DE",
+  purple:"#7238C9", purpleDim:"#F3EEFC", text:"#1C1B18", muted:"#6E6C64",
   inputBg:"#FBFAF6", shadow:"rgba(28,27,24,0.06)", shadowLg:"rgba(28,27,24,0.16)", mode:"light",
 };
 
@@ -3822,13 +3822,12 @@ export default function App() {
         {/* SIDEBAR */}
         <div className={`sidebar ${sidebarCollapsed?"collapsed":""}`}>
           <div className="sidebar-header">
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:2}}>
-              <div style={{background:T_cur.mode==="dark"?"#fff":"transparent",borderRadius:T_cur.mode==="dark"?8:0,padding:T_cur.mode==="dark"?"6px 10px":0,display:"inline-block"}}>
-                <img src={LOGO_BASE64} alt="VCatch" style={{height:30,display:"block"}}/>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2,flexWrap:"nowrap"}}>
+              <div style={{background:T_cur.mode==="dark"?"#fff":"transparent",borderRadius:T_cur.mode==="dark"?8:0,padding:T_cur.mode==="dark"?"5px 8px":0,display:"inline-block",flexShrink:0}}>
+                <img src={LOGO_BASE64} alt="VCatch" style={{height:24,display:"block"}}/>
               </div>
-              <div style={{fontSize:20,fontWeight:800,letterSpacing:"-0.02em",color:T_cur.text}}>Hire Flow</div>
+              <div style={{fontSize:17,fontWeight:800,letterSpacing:"-0.02em",color:T_cur.text,whiteSpace:"nowrap"}}>Hire Flow</div>
             </div>
-            <div className="sidebar-tagline">VCatch</div>
           </div>
           <nav className="nav">
             <div className="nav-section">Menu</div>
