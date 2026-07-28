@@ -332,6 +332,11 @@ function Toast({ msg, type, onClose }) {
 // Placeholder rows shown while a table is loading — reads as far more
 // deliberate than a plain "Loading..." line, and matches the shape of the
 // real table so there's no layout jump once data arrives.
+// Stages where a candidate is already moving positively through hiring —
+// sending them to IVR again risks interfering with an active process, so
+// that action gets a confirmation instead of firing silently.
+const POSITIVE_HIRING_STAGES=["Interview Scheduled","Interview Done","Selected/Offer","Hired"];
+
 function SkeletonRows({ cols, rows=5 }) {
   return (
     <>
@@ -2147,9 +2152,9 @@ function DialingSettings({ showToast }) {
       <div className="card-body">
         <div className="two-col" style={{marginBottom:12}}>
           <div className="field"><label>Retry Interval (minutes)</label><input type="number" min="1" value={retryMinutes} onChange={e=>setRetryMinutes(e.target.value)}/></div>
-          <div className="field"><label>Max Auto-Retries</label><input type="number" min="0" value={maxRetries} onChange={e=>setMaxRetries(e.target.value)}/></div>
+          <div className="field"><label>Retries After First Call</label><input type="number" min="0" value={maxRetries} onChange={e=>setMaxRetries(e.target.value)}/></div>
         </div>
-        <div className="info-box amber" style={{marginBottom:12}}>When "Send to IVR" doesn't get answered, it's automatically retried this often, up to this many times, before it stops on its own.</div>
+        <div className="info-box amber" style={{marginBottom:12}}>Total calls placed = 1 (the initial "Send to IVR" call) + this number. E.g. set to 2 for 1 initial call + 2 retries = 3 calls total, before it stops on its own if still unanswered.</div>
         <button className="btn btn-sm" onClick={save} disabled={saving}>{saving?"Saving...":"Save"}</button>
       </div>
     </div>
@@ -2848,6 +2853,10 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
   }
 
   async function sendToIvr(){
+    if(candidate.ivr_next_attempt_at){showToast("IVR call already scheduled for this candidate","error");return;}
+    if(POSITIVE_HIRING_STAGES.includes(currentStage?.name)){
+      if(!window.confirm(`${candidate.name} is already in "${currentStage.name}" — sending to IVR now could interfere with an active hiring process. Continue anyway?`))return;
+    }
     setSendingToIvr(true);
     try{
       const res=await renderFetch("/hireflow/send-to-ivr",{method:"POST",body:JSON.stringify({candidate_id:candidate.id})});
@@ -3085,6 +3094,8 @@ function HireFlowCandidates({ showToast }) {
   const [bulkAssigning,setBulkAssigning]=useState(false);
   const [bulkDeleting,setBulkDeleting]=useState(false);
   const [bulkHighlighting,setBulkHighlighting]=useState(false);
+  const [sendingIvrIds,setSendingIvrIds]=useState([]);
+  const [bulkSendingIvr,setBulkSendingIvr]=useState(false);
   const fileRef=useRef();
 
   const [pageTab,setPageTab]=useState("pipeline");
@@ -3353,6 +3364,40 @@ function HireFlowCandidates({ showToast }) {
     finally{setBulkHighlighting(false);}
   }
 
+  async function sendToIvrSingle(c){
+    if(c.ivr_next_attempt_at){showToast("IVR call already scheduled for this candidate","error");return;}
+    const stageName=stageMap[c.current_stage_id]?.name;
+    if(POSITIVE_HIRING_STAGES.includes(stageName)){
+      if(!window.confirm(`${c.name} is already in "${stageName}" — sending to IVR now could interfere with an active hiring process. Continue anyway?`))return;
+    }
+    setSendingIvrIds(prev=>[...prev,c.id]);
+    try{
+      const res=await renderFetch("/hireflow/send-to-ivr",{method:"POST",body:JSON.stringify({candidate_id:c.id})});
+      showToast(res.message||"Scheduled","success");
+      loadAll();
+    }catch(e){showToast(e.message||"Failed to send to IVR","error");}
+    finally{setSendingIvrIds(prev=>prev.filter(id=>id!==c.id));}
+  }
+
+  async function bulkSendToIvr(){
+    if(!selectedIds.length)return;
+    const targets=candidates.filter(c=>selectedIds.includes(c.id));
+    const alreadyScheduled=targets.filter(c=>c.ivr_next_attempt_at);
+    if(alreadyScheduled.length){showToast(`${alreadyScheduled.length} of ${targets.length} selected already have an IVR call scheduled — deselect them first`,"error");return;}
+    const positive=targets.filter(c=>POSITIVE_HIRING_STAGES.includes(stageMap[c.current_stage_id]?.name));
+    if(positive.length&&!window.confirm(`${positive.length} of ${targets.length} selected are already in a positive hiring stage (Interview/Selected/Hired). Send to IVR anyway?`))return;
+    setBulkSendingIvr(true);
+    try{
+      for(const c of targets){
+        await renderFetch("/hireflow/send-to-ivr",{method:"POST",body:JSON.stringify({candidate_id:c.id})});
+      }
+      showToast(`${targets.length} candidates sent to IVR`,"success");
+      setSelectedIds([]);
+      loadAll();
+    }catch(e){showToast(e.message||"Some sends failed","error");}
+    finally{setBulkSendingIvr(false);}
+  }
+
   function toggleSelect(id){
     setSelectedIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
   }
@@ -3440,16 +3485,19 @@ function HireFlowCandidates({ showToast }) {
           {(filterFrom||filterTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setFilterFrom("");setFilterTo("");}}>✕ Clear Dates</button>}
         </div>
 
-        {["ADMIN","MANAGER"].includes(role)&&selectedIds.length>0&&(
-          <div className="card" style={{display:"flex",gap:8,alignItems:"center",padding:12,marginBottom:16,border:`1.5px solid ${T.accent}`}}>
-            <div style={{fontSize:13,fontWeight:600,color:T.accent}}>{selectedIds.length} selected — Bulk Reassign</div>
-            <select className="filter-select" value={bulkAssignTo} onChange={e=>setBulkAssignTo(e.target.value)}>
-              <option value="">Reassign to…</option>{assignableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
-            </select>
-            <button className="btn btn-sm" onClick={bulkAssign} disabled={bulkAssigning||!bulkAssignTo}>{bulkAssigning?"Reassigning...":"Reassign"}</button>
-            <button className="btn btn-sm btn-danger" onClick={bulkDelete} disabled={bulkDeleting}>{bulkDeleting?"Deleting...":"Delete"}</button>
-            <button className="btn btn-sm btn-ghost" style={{color:T.amber,borderColor:T.amber}} onClick={()=>bulkHighlight(true)} disabled={bulkHighlighting}>★ Highlight</button>
-            <button className="btn btn-sm btn-ghost" onClick={()=>bulkHighlight(false)} disabled={bulkHighlighting}>Remove Highlight</button>
+        {selectedIds.length>0&&(
+          <div className="card" style={{display:"flex",gap:8,alignItems:"center",padding:12,marginBottom:16,border:`1.5px solid ${T.accent}`,flexWrap:"wrap"}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.accent}}>{selectedIds.length} selected</div>
+            {["ADMIN","MANAGER"].includes(role)&&(<>
+              <select className="filter-select" value={bulkAssignTo} onChange={e=>setBulkAssignTo(e.target.value)}>
+                <option value="">Reassign to…</option>{assignableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
+              </select>
+              <button className="btn btn-sm" onClick={bulkAssign} disabled={bulkAssigning||!bulkAssignTo}>{bulkAssigning?"Reassigning...":"Reassign"}</button>
+              <button className="btn btn-sm btn-danger" onClick={bulkDelete} disabled={bulkDeleting}>{bulkDeleting?"Deleting...":"Delete"}</button>
+              <button className="btn btn-sm btn-ghost" style={{color:T.amber,borderColor:T.amber}} onClick={()=>bulkHighlight(true)} disabled={bulkHighlighting}>★ Highlight</button>
+              <button className="btn btn-sm btn-ghost" onClick={()=>bulkHighlight(false)} disabled={bulkHighlighting}>Remove Highlight</button>
+            </>)}
+            <button className="btn btn-sm btn-ghost" style={{color:T.accent,borderColor:T.accent}} onClick={bulkSendToIvr} disabled={bulkSendingIvr}>{bulkSendingIvr?"Sending...":"📞 Send to IVR"}</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>setSelectedIds([])}>Clear</button>
           </div>
         )}
@@ -3462,7 +3510,7 @@ function HireFlowCandidates({ showToast }) {
                 <thead><tr>
                   <th style={{width:20,padding:"8px 4px"}}></th>
                   <th style={{width:22,padding:"8px 4px"}}>#</th>
-                  {["ADMIN","MANAGER"].includes(role)&&<th style={{width:22,padding:"8px 4px"}}></th>}
+                  <th style={{width:22,padding:"8px 4px"}}></th>
                   <ResizableTh col="name" widths={colWidths} setWidths={setColWidths} defaultWidth={130}>Name</ResizableTh>
                   <ResizableTh col="phone" widths={colWidths} setWidths={setColWidths} defaultWidth={100}>Phone</ResizableTh>
                   <ResizableTh col="process" widths={colWidths} setWidths={setColWidths} defaultWidth={110}>Process</ResizableTh>
@@ -3472,8 +3520,9 @@ function HireFlowCandidates({ showToast }) {
                   <ResizableTh col="remarks" widths={colWidths} setWidths={setColWidths} defaultWidth={180}>Remarks</ResizableTh>
                   <th style={{width:70}}>Contacted</th>
                   <ResizableTh col="lastActivity" widths={colWidths} setWidths={setColWidths} defaultWidth={110}>Last Activity</ResizableTh>
+                  <th style={{width:110}}>IVR</th>
                 </tr></thead>
-                <tbody>{loading?<SkeletonRows cols={["ADMIN","MANAGER"].includes(role)?12:11}/>:paged.map((c,i)=>{
+                <tbody>{loading?<SkeletonRows cols={13}/>:paged.map((c,i)=>{
                   const stage=stageMap[c.current_stage_id];
                   const owner=userMap[c.assigned_to];
                   const summary=activitySummary[c.id];
@@ -3491,11 +3540,9 @@ function HireFlowCandidates({ showToast }) {
                         <span style={{cursor:"pointer",fontSize:14,color:c.highlighted?T.amber:T.border}}>★</span>
                       </td>
                       <td style={{color:T.muted,fontSize:12,padding:"6px 4px"}}>{(pageSafe-1)*pageSize+i+1}</td>
-                      {["ADMIN","MANAGER"].includes(role)&&(
-                        <td style={{padding:"6px 4px"}} onClick={e=>e.stopPropagation()}>
-                          <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={()=>toggleSelect(c.id)}/>
-                        </td>
-                      )}
+                      <td style={{padding:"6px 4px"}} onClick={e=>e.stopPropagation()}>
+                        <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={()=>toggleSelect(c.id)}/>
+                      </td>
                       <td style={{fontWeight:500}}>{c.name}</td>
                       <td style={{fontFamily:"monospace"}}>{c.phone}</td>
                       <td>{processMap[c.process_id]||"—"}</td>
@@ -3512,6 +3559,12 @@ function HireFlowCandidates({ showToast }) {
                       <td>{summary?.count||0}x</td>
                       <td style={{fontSize:12,color:stale?T.amber:T.muted}}>
                         {summary?.last?new Date(summary.last).toLocaleDateString("en-IN"):"Never"}{stale&&" — STALE"}
+                      </td>
+                      <td onClick={e=>e.stopPropagation()}>
+                        {c.ivr_next_attempt_at?
+                          <span className="badge badge-gray" title={`Scheduled for ${new Date(c.ivr_next_attempt_at).toLocaleString("en-IN")}`}>Scheduled</span>:
+                          <button className="btn btn-sm btn-ghost" onClick={()=>sendToIvrSingle(c)} disabled={sendingIvrIds.includes(c.id)}>{sendingIvrIds.includes(c.id)?"...":"📞 IVR"}</button>
+                        }
                       </td>
                     </tr>
                   );
