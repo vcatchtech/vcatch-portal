@@ -26,16 +26,16 @@ const LOGO_BASE64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAACoCAYAA
 // ================================================
 const DARK = {
   bg:"#0A0C11", surface:"#12151D", card:"#171B26", border:"#242938",
-  accent:"#6366F1", accentDim:"#1E2036", green:"#34D399", greenDim:"#0D2320",
-  red:"#F87171", redDim:"#2A1518", amber:"#FBBF24", amberDim:"#2A2010",
-  purple:"#A78BFA", purpleDim:"#211A3A", text:"#EDEFF5", muted:"#7C88A6",
+  accent:"#5B5FC4", accentDim:"#1E2036", green:"#3BAE86", greenDim:"#0D2320",
+  red:"#E2726F", redDim:"#2A1518", amber:"#D9A83D", amberDim:"#2A2010",
+  purple:"#9884D6", purpleDim:"#211A3A", text:"#EDEFF5", muted:"#7C88A6",
   inputBg:"#12151D", shadow:"rgba(0,0,0,0.35)", shadowLg:"rgba(0,0,0,0.55)", mode:"dark",
 };
 const LIGHT = {
-  bg:"#F6F4EF", surface:"#FFFDF9", card:"#FFFDF9", border:"#E4E1D8",
-  accent:"#4F52D9", accentDim:"#ECEDFB", green:"#0E8F63", greenDim:"#E6F7F0",
-  red:"#D23C3F", redDim:"#FBEDED", amber:"#B8790A", amberDim:"#FBF1DE",
-  purple:"#7238C9", purpleDim:"#F3EEFC", text:"#1C1B18", muted:"#6E6C64",
+  bg:"#EBE8DF", surface:"#FFFDF9", card:"#FFFDF9", border:"#E4E1D8",
+  accent:"#4548B0", accentDim:"#ECEDFB", green:"#177A5C", greenDim:"#E6F7F0",
+  red:"#B93F41", redDim:"#FBEDED", amber:"#A06E22", amberDim:"#FBF1DE",
+  purple:"#6740AA", purpleDim:"#F3EEFC", text:"#1C1B18", muted:"#6E6C64",
   inputBg:"#FBFAF6", shadow:"rgba(28,27,24,0.06)", shadowLg:"rgba(28,27,24,0.16)", mode:"light",
 };
 
@@ -325,6 +325,42 @@ function Toast({ msg, type, onClose }) {
   useEffect(() => { const t = setTimeout(onClose, 3500); return () => clearTimeout(t); }, []);
   const icons = { success:"✅", error:"❌", info:"ℹ️", warn:"⚠️" };
   return <div className="toast">{icons[type]||"ℹ️"} {msg}</div>;
+}
+
+// Searchable dropdown for filter bars — plain <select> doesn't support
+// search, which gets painful once a list (processes, recruiters, positions)
+// grows past a handful of options.
+function FilterSelect({ value, onChange, options, allLabel, style }) {
+  const [open,setOpen]=useState(false);
+  const [query,setQuery]=useState("");
+  const ref=useRef(null);
+  useEffect(()=>{
+    function onDocClick(e){if(ref.current&&!ref.current.contains(e.target))setOpen(false);}
+    document.addEventListener("mousedown",onDocClick);
+    return()=>document.removeEventListener("mousedown",onDocClick);
+  },[]);
+  const selected=options.find(o=>String(o.value)===String(value));
+  const label=value?(selected?.label||""):allLabel;
+  const q=query.trim().toLowerCase();
+  const filtered=q?options.filter(o=>o.label.toLowerCase().includes(q)):options;
+  return (
+    <div ref={ref} style={{position:"relative",display:"inline-block",...style}}>
+      <button type="button" className="filter-select" style={{textAlign:"left",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:6,width:"100%"}} onClick={()=>setOpen(v=>!v)}>
+        <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
+        <span style={{fontSize:10,opacity:0.6}}>▾</span>
+      </button>
+      {open&&(
+        <div className="card" style={{position:"absolute",top:"calc(100% + 4px)",left:0,zIndex:30,minWidth:200,maxHeight:280,overflowY:"auto",padding:6,margin:0,boxShadow:`0 4px 16px ${T.shadowLg}`}}>
+          <input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search..." style={{marginBottom:6}} onClick={e=>e.stopPropagation()}/>
+          <div onClick={()=>{onChange("");setOpen(false);setQuery("");}} style={{padding:"6px 8px",cursor:"pointer",borderRadius:6,fontWeight:!value?600:400,color:!value?T.accent:T.text}}>{allLabel}</div>
+          {filtered.map(o=>(
+            <div key={o.value} onClick={()=>{onChange(o.value);setOpen(false);setQuery("");}} style={{padding:"6px 8px",cursor:"pointer",borderRadius:6,fontWeight:String(value)===String(o.value)?600:400,color:String(value)===String(o.value)?T.accent:T.text}}>{o.label}</div>
+          ))}
+          {filtered.length===0&&<div style={{padding:"6px 8px",fontSize:12,color:T.muted}}>No matches</div>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function DisposBadge({ sub }) {
@@ -706,10 +742,7 @@ function Dashboard({ showToast, role }) {
                 <input type="date" className="filter-input" value={hfDateFrom} onChange={e=>setHfDateFrom(e.target.value)} title="From date"/>
                 <input type="date" className="filter-input" value={hfDateTo} onChange={e=>setHfDateTo(e.target.value)} title="To date"/>
                 {hfAssigneeOptions.length>0&&(
-                  <select className="filter-select" value={hfAssignedTo} onChange={e=>setHfAssignedTo(e.target.value)}>
-                    <option value="">{role==="ADMIN"?"Everyone":"My Team"}</option>
-                    {hfAssigneeOptions.map(u=><option key={u.id} value={u.id}>{u.id===hfMyUserId?"Me":(u.name||u.email)}</option>)}
-                  </select>
+                  <FilterSelect value={hfAssignedTo} onChange={setHfAssignedTo} allLabel={role==="ADMIN"?"Everyone":"My Team"} options={hfAssigneeOptions.map(u=>({value:u.id,label:u.id===hfMyUserId?"Me":(u.name||u.email)}))}/>
                 )}
                 {(hfDateFrom||hfDateTo)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setHfDateFrom("");setHfDateTo("");}}>All Time</button>}
                 <button className="btn btn-sm btn-ghost" onClick={()=>{setHfDateFrom(today());setHfDateTo(today());}}>Today</button>
@@ -800,10 +833,7 @@ function Dashboard({ showToast, role }) {
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
             <input type="date" className="filter-input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} title="From date"/>
             <input type="date" className="filter-input" value={dateTo} onChange={e=>setDateTo(e.target.value)} title="To date"/>
-            <select className="filter-select" value={campaignFilter} onChange={e=>setCampaignFilter(e.target.value)}>
-              <option value="">All Campaigns</option>
-              {campaignList.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
-            </select>
+            <FilterSelect value={campaignFilter} onChange={setCampaignFilter} allLabel="All Campaigns" options={campaignList.map(c=>({value:c.name,label:c.name}))}/>
             {(dateFrom||dateTo||campaignFilter)&&<button className="btn btn-sm btn-ghost" onClick={()=>{setDateFrom("");setDateTo("");setCampaignFilter("");}}>✕ Clear</button>}
             <span style={{width:1,height:20,background:T.border,margin:"0 2px"}}/>
             <button className={`btn btn-sm ${ivrView==="day"?"":"btn-ghost"}`} onClick={()=>setIvrView("day")}>Day-wise</button>
@@ -1305,17 +1335,13 @@ function Leads({ showToast }) {
           <div className="card-header">
             <div className="card-title">All Leads ({filtered.length})</div>
             <div className="filter-row">
-              <select className="filter-select" value={filterCampaign} onChange={e=>{setFilterCampaign(e.target.value);loadLeads(e.target.value);}}>
-                <option value="ALL">All Campaigns</option>
-                {campaigns.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
-              </select>
-              <select className="filter-select" value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
-                <option value="ALL">All Status</option>
-                <option value="PENDING">Pending</option>
-                <option value="CALLED">Called (retry pending)</option>
-                <option value="CALLED_FINAL">Completed</option>
-                <option value="SKIPPED">Skipped (DND or Interested elsewhere)</option>
-              </select>
+              <FilterSelect value={filterCampaign==="ALL"?"":filterCampaign} onChange={v=>{const nv=v||"ALL";setFilterCampaign(nv);loadLeads(nv);}} allLabel="All Campaigns" options={campaigns.map(c=>({value:c.name,label:c.name}))}/>
+              <FilterSelect value={filterStatus==="ALL"?"":filterStatus} onChange={v=>setFilterStatus(v||"ALL")} allLabel="All Status" options={[
+                {value:"PENDING",label:"Pending"},
+                {value:"CALLED",label:"Called (retry pending)"},
+                {value:"CALLED_FINAL",label:"Completed"},
+                {value:"SKIPPED",label:"Skipped (DND or Interested elsewhere)"},
+              ]}/>
               <button className="btn btn-sm btn-ghost" onClick={()=>loadLeads(filterCampaign)}>↻</button>
             </div>
           </div>
@@ -1450,17 +1476,13 @@ function InterestedCandidates({ showToast }) {
           ))}
         </div>
         <div className="filter-row" style={{marginBottom:16}}>
-          <select className="filter-select" value={filterCampaign} onChange={e=>{setFilterCampaign(e.target.value);saveFilter("cand_campaign",e.target.value);}}>
-            <option value="ALL">All Campaigns</option>
-            {campaigns.map(c=><option key={c} value={c}>{c}</option>)}
-          </select>
-          <select className="filter-select" value={filterStatus} onChange={e=>{setFilterStatus(e.target.value);saveFilter("cand_status",e.target.value);}}>
-            <option value="ALL">All Status</option>
-            <option value="PENDING">Pending</option>
-            <option value="PICKED_UP">Picked Up</option>
-            <option value="REJECTED">Rejected</option>
-            <option value="HIRED">Hired</option>
-          </select>
+          <FilterSelect value={filterCampaign==="ALL"?"":filterCampaign} onChange={v=>{const nv=v||"ALL";setFilterCampaign(nv);saveFilter("cand_campaign",nv);}} allLabel="All Campaigns" options={campaigns.map(c=>({value:c,label:c}))}/>
+          <FilterSelect value={filterStatus==="ALL"?"":filterStatus} onChange={v=>{const nv=v||"ALL";setFilterStatus(nv);saveFilter("cand_status",nv);}} allLabel="All Status" options={[
+            {value:"PENDING",label:"Pending"},
+            {value:"PICKED_UP",label:"Picked Up"},
+            {value:"REJECTED",label:"Rejected"},
+            {value:"HIRED",label:"Hired"},
+          ]}/>
           <input type="date" className="filter-input" value={filterFrom} onChange={e=>setFilterFrom(e.target.value)} title="From date"/>
           <span style={{color:T.muted,fontSize:12}}>to</span>
           <input type="date" className="filter-input" value={filterTo} onChange={e=>setFilterTo(e.target.value)} title="To date"/>
@@ -1766,14 +1788,8 @@ function CallLogs({ showToast }) {
           </div>
         )}
         <div className="filter-row" style={{marginBottom:16}}>
-          <select className="filter-select" value={fc} onChange={e=>setFc(e.target.value)}>
-            <option value="ALL">All Campaigns</option>
-            {campaigns.map(c=><option key={c} value={c}>{c}</option>)}
-          </select>
-          <select className="filter-select" value={fds} onChange={e=>setFds(e.target.value)}>
-            <option value="ALL">All Dispositions</option>
-            {dispositions.map(d=><option key={d} value={d}>{d.replace(/_/g," ")}</option>)}
-          </select>
+          <FilterSelect value={fc==="ALL"?"":fc} onChange={v=>setFc(v||"ALL")} allLabel="All Campaigns" options={campaigns.map(c=>({value:c,label:c}))}/>
+          <FilterSelect value={fds==="ALL"?"":fds} onChange={v=>setFds(v||"ALL")} allLabel="All Dispositions" options={dispositions.map(d=>({value:d,label:d.replace(/_/g," ")}))}/>
           <input type="date" className="filter-input" value={fd} onChange={e=>setFd(e.target.value)} title="From date"/>
           <input type="date" className="filter-input" value={td} onChange={e=>setTd(e.target.value)} title="To date"/>
           <button className="btn btn-sm btn-ghost" onClick={()=>quickRange(7)}>7 Days</button>
@@ -1991,9 +2007,9 @@ function SimpleRefList({ table, title, placeholder, showToast }) {
     <div className="card">
       <div className="card-header"><div className="card-title">{title}</div></div>
       <div className="card-body">
-        <div className="two-col" style={{marginBottom:12,alignItems:"flex-end"}}>
-          <div className="field" style={{marginBottom:0}}><label>Add New</label><input value={name} onChange={e=>setName(e.target.value)} placeholder={placeholder} onKeyDown={e=>e.key==="Enter"&&add()}/></div>
-          <button className="btn btn-sm" onClick={add} disabled={adding}>{adding?"Adding...":"Add"}</button>
+        <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"flex-end"}}>
+          <div className="field" style={{marginBottom:0,flex:1}}><label>Add New</label><input value={name} onChange={e=>setName(e.target.value)} placeholder={placeholder} onKeyDown={e=>e.key==="Enter"&&add()}/></div>
+          <button className="btn btn-sm" style={{flexShrink:0}} onClick={add} disabled={adding}>{adding?"Adding...":"Add"}</button>
         </div>
         {list.length===0?<div className="empty-state"><div className="empty-title">None yet</div></div>:(
           <table>
@@ -2173,6 +2189,12 @@ function PositionOpenings({ showToast }) {
   const [expandedOpening,setExpandedOpening]=useState(null);
   const [loading,setLoading]=useState(false);
   const [statusFilter,setStatusFilter]=useState("OPEN");
+  const [companyFilter,setCompanyFilter]=useState("");
+  const [processFilter,setProcessFilter]=useState("");
+  const [positionFilter,setPositionFilter]=useState("");
+  const [hrFilter,setHrFilter]=useState("");
+  const [dateFrom,setDateFrom]=useState("");
+  const [dateTo,setDateTo]=useState("");
   const [form,setForm]=useState({company_id:"",process_id:"",position_type_id:"",target_count:1,note:""});
   const [creating,setCreating]=useState(false);
   const myUserId=useRef(null);
@@ -2299,17 +2321,32 @@ function PositionOpenings({ showToast }) {
     catch{showToast("Failed to reopen","error");}
   }
 
-  const filtered=openings.filter(o=>statusFilter==="ALL"||o.status===statusFilter);
-  const openCount=openings.filter(o=>o.status==="OPEN").length;
-  const openTarget=openings.filter(o=>o.status==="OPEN").reduce((s,o)=>s+o.target_count,0);
-  const openFilled=openings.filter(o=>o.status==="OPEN").reduce((s,o)=>s+(filledCountByOpening[o.id]||0),0);
+  // All filters compose together and drive everything below — KPIs, the
+  // avg-days breakdowns, and the Positions table itself — not just the table.
+  const hrOptions=[...new Set(Object.values(fillsByOpening).flat().map(c=>c.filled_by).filter(Boolean))];
+  const filteredOpenings=openings.filter(o=>{
+    if(companyFilter&&o.company_id!==companyFilter)return false;
+    if(processFilter&&o.process_id!==processFilter)return false;
+    if(positionFilter&&o.position_type_id!==positionFilter)return false;
+    if(hrFilter&&!(fillsByOpening[o.id]||[]).some(c=>c.filled_by===hrFilter))return false;
+    if(dateFrom||dateTo){
+      const d=new Date(o.created_at).toISOString().split("T")[0];
+      if(dateFrom&&d<dateFrom)return false;
+      if(dateTo&&d>dateTo)return false;
+    }
+    return true;
+  });
+  const filtered=filteredOpenings.filter(o=>statusFilter==="ALL"||o.status===statusFilter);
+  const openCount=filteredOpenings.filter(o=>o.status==="OPEN").length;
+  const openTarget=filteredOpenings.filter(o=>o.status==="OPEN").reduce((s,o)=>s+o.target_count,0);
+  const openFilled=filteredOpenings.filter(o=>o.status==="OPEN").reduce((s,o)=>s+(filledCountByOpening[o.id]||0),0);
 
   // Days-to-close: only meaningful for openings that have actually closed.
   // For anything reopened and closed again, this measures from the
   // original open date to the latest close, so a reopen gap in between
   // inflates the number — acceptable for now since we don't keep a full
   // per-cycle history, just the most recent close.
-  const closedOnes=openings.filter(o=>o.status==="CLOSED"&&o.closed_at);
+  const closedOnes=filteredOpenings.filter(o=>o.status==="CLOSED"&&o.closed_at);
   function daysToClose(o){return (new Date(o.closed_at)-new Date(o.created_at))/86400000;}
   const avgDaysToClose=closedOnes.length?(closedOnes.reduce((s,o)=>s+daysToClose(o),0)/closedOnes.length):null;
   const closedToday=closedOnes.filter(o=>new Date(o.closed_at).toISOString().split("T")[0]===today()).length;
@@ -2415,6 +2452,20 @@ function PositionOpenings({ showToast }) {
                 </div>
               </div>
             )}
+
+            <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+              <FilterSelect value={companyFilter} onChange={setCompanyFilter} allLabel="All Companies" options={companies.map(c=>({value:c.id,label:c.name}))}/>
+              <FilterSelect value={processFilter} onChange={setProcessFilter} allLabel="All Processes" options={processes.map(p=>({value:p.id,label:p.name}))}/>
+              <FilterSelect value={positionFilter} onChange={setPositionFilter} allLabel="All Positions" options={positionTypes.map(p=>({value:p.id,label:p.name}))}/>
+              <FilterSelect value={hrFilter} onChange={setHrFilter} allLabel="Everyone (HR)" options={hrOptions.map(id=>({value:id,label:recruiterMap[id]||"—"}))}/>
+              <input type="date" className="filter-input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} title="Opened from date"/>
+              <input type="date" className="filter-input" value={dateTo} onChange={e=>setDateTo(e.target.value)} title="Opened to date"/>
+              <button className="btn btn-sm btn-ghost" onClick={()=>{const t=today();setDateFrom(t);setDateTo(t);}}>Today</button>
+              <button className="btn btn-sm btn-ghost" onClick={()=>{const t=new Date();const f=new Date();f.setDate(t.getDate()-7);setDateFrom(f.toISOString().split("T")[0]);setDateTo(t.toISOString().split("T")[0]);}}>This Week</button>
+              {(companyFilter||processFilter||positionFilter||hrFilter||dateFrom||dateTo)&&(
+                <button className="btn btn-sm btn-ghost" onClick={()=>{setCompanyFilter("");setProcessFilter("");setPositionFilter("");setHrFilter("");setDateFrom("");setDateTo("");}}>✕ Clear Filters</button>
+              )}
+            </div>
 
             <div className="card">
               <div className="card-header">
@@ -3322,21 +3373,14 @@ function HireFlowCandidates({ showToast }) {
         </div>
         <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
           <input className="filter-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or phone" style={{maxWidth:220}}/>
-          <select className="filter-select" value={stageFilter} onChange={e=>setStageFilter(e.target.value)}>
-            <option value="ALL">All Stages</option>
-            {funnelStages.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-          <select className="filter-select" value={processFilter} onChange={e=>setProcessFilter(e.target.value)}>
-            <option value="ALL">All Processes</option>
-            {processes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          <FilterSelect value={stageFilter==="ALL"?"":stageFilter} onChange={v=>setStageFilter(v||"ALL")} allLabel="All Stages" options={funnelStages.map(s=>({value:s.id,label:s.name}))}/>
+          <FilterSelect value={processFilter==="ALL"?"":processFilter} onChange={v=>setProcessFilter(v||"ALL")} allLabel="All Processes" options={processes.map(p=>({value:p.id,label:p.name}))}/>
           {["ADMIN","MANAGER"].includes(role)&&(
-            <select className="filter-select" value={assigneeFilter} onChange={e=>setAssigneeFilter(e.target.value)}>
-              <option value="">Everyone</option>
-              <option value="MINE">Assigned to Me</option>
-              {role==="MANAGER"&&<option value="TEAM">My Team</option>}
-              {assignableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.email}</option>)}
-            </select>
+            <FilterSelect value={assigneeFilter} onChange={setAssigneeFilter} allLabel="Everyone" options={[
+              {value:"MINE",label:"Assigned to Me"},
+              ...(role==="MANAGER"?[{value:"TEAM",label:"My Team"}]:[]),
+              ...assignableUsers.map(u=>({value:u.id,label:u.name||u.email})),
+            ]}/>
           )}
           <input type="date" className="filter-input" value={filterFrom} onChange={e=>setFilterFrom(e.target.value)} title="Assigned from date"/>
           <input type="date" className="filter-input" value={filterTo} onChange={e=>setFilterTo(e.target.value)} title="Assigned to date"/>
@@ -3778,10 +3822,13 @@ export default function App() {
         {/* SIDEBAR */}
         <div className={`sidebar ${sidebarCollapsed?"collapsed":""}`}>
           <div className="sidebar-header">
-            <div style={{background:"#fff",borderRadius:8,padding:"6px 12px",display:"inline-block",marginBottom:4}}>
-              <img src={LOGO_BASE64} alt="VCatch" style={{height:24,display:"block"}}/>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:2}}>
+              <div style={{background:T_cur.mode==="dark"?"#fff":"transparent",borderRadius:T_cur.mode==="dark"?8:0,padding:T_cur.mode==="dark"?"6px 10px":0,display:"inline-block"}}>
+                <img src={LOGO_BASE64} alt="VCatch" style={{height:30,display:"block"}}/>
+              </div>
+              <div style={{fontSize:20,fontWeight:800,letterSpacing:"-0.02em",color:T_cur.text}}>VCatch</div>
             </div>
-            <div className="sidebar-tagline">Hire Flow VCatch</div>
+            <div className="sidebar-tagline">Hire Flow</div>
           </div>
           <nav className="nav">
             <div className="nav-section">Menu</div>
