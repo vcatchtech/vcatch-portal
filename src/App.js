@@ -3112,6 +3112,10 @@ function HireFlowCandidates({ showToast }) {
 
   const [pageTab,setPageTab]=useState("pipeline");
   const [hiredDateMap,setHiredDateMap]=useState({});
+  const [hiredProcessFilter,setHiredProcessFilter]=useState("");
+  const [hiredPositionFilter,setHiredPositionFilter]=useState("");
+  const [hiredFrom,setHiredFrom]=useState("");
+  const [hiredTo,setHiredTo]=useState("");
   const role=getRole();
   const myUserId=users.find(u=>u.email===getEmail())?.id;
   const reporteeIds=users.filter(u=>u.manager_id===myUserId).map(u=>u.id);
@@ -3211,10 +3215,24 @@ function HireFlowCandidates({ showToast }) {
   const hiredStageIdForTab=funnelStages.find(s=>s.name==="Hired")?.id;
   const hiredList=candidates.filter(c=>{
     if(c.current_stage_id!==hiredStageIdForTab)return false;
-    if(role==="HR")return c.assigned_to===myUserId;
-    if(role==="MANAGER")return reporteeIds.includes(c.assigned_to)||c.assigned_to===myUserId;
+    if(role==="HR"){if(c.assigned_to!==myUserId)return false;}
+    else if(role==="MANAGER"){if(!(reporteeIds.includes(c.assigned_to)||c.assigned_to===myUserId))return false;}
+    if(hiredProcessFilter&&c.process_id!==hiredProcessFilter)return false;
+    if(hiredPositionFilter&&c.position_type_id!==hiredPositionFilter)return false;
+    if(hiredFrom||hiredTo){
+      const hd=hiredDateMap[c.id];
+      if(!hd)return false;
+      const d=new Date(hd).toISOString().split("T")[0];
+      if(hiredFrom&&d<hiredFrom)return false;
+      if(hiredTo&&d>hiredTo)return false;
+    }
     return true;
   }).sort((a,b)=>new Date(hiredDateMap[b.id]||0)-new Date(hiredDateMap[a.id]||0));
+  const hiredByProcess=(()=>{
+    const groups={};
+    hiredList.forEach(c=>{const k=processMap[c.process_id]||"—";groups[k]=(groups[k]||0)+1;});
+    return Object.entries(groups).sort((a,b)=>b[1]-a[1]);
+  })();
 
   // ---- Pipeline KPIs (all-time, role-scoped) ----
   const dashScoped=candidates.filter(c=>{
@@ -3472,6 +3490,24 @@ function HireFlowCandidates({ showToast }) {
           <button className={`btn btn-sm ${pageTab==="ivr"?"":"btn-ghost"}`} onClick={()=>setPageTab("ivr")}>IVR Interested</button>
         </div>
         {pageTab==="ivr"?<InterestedCandidates showToast={showToast}/>:pageTab==="hired"?(
+          <>
+          <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",marginBottom:16}}>
+            <div className="kpi-card"><div className="kpi-label">Total Hired</div><div className="kpi-value green">{hiredList.length}</div><div className="kpi-sub">{hiredFrom||hiredTo?"Filtered range":"All time"}</div></div>
+            {hiredByProcess.slice(0,4).map(([name,count])=>(
+              <div className="kpi-card" key={name}><div className="kpi-label">{name}</div><div className="kpi-value blue">{count}</div><div className="kpi-sub">Hired</div></div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+            <FilterSelect value={hiredProcessFilter} onChange={setHiredProcessFilter} allLabel="All Processes" options={processes.map(p=>({value:p.id,label:p.name}))}/>
+            <FilterSelect value={hiredPositionFilter} onChange={setHiredPositionFilter} allLabel="All Positions" options={positionTypes.map(p=>({value:p.id,label:p.name}))}/>
+            <input type="date" className="filter-input" value={hiredFrom} onChange={e=>setHiredFrom(e.target.value)} title="Hired from date"/>
+            <input type="date" className="filter-input" value={hiredTo} onChange={e=>setHiredTo(e.target.value)} title="Hired to date"/>
+            <button className="btn btn-sm btn-ghost" onClick={()=>{const t=today();setHiredFrom(t);setHiredTo(t);}}>Today</button>
+            <button className="btn btn-sm btn-ghost" onClick={()=>{const t=new Date();const f=new Date();f.setDate(t.getDate()-7);setHiredFrom(f.toISOString().split("T")[0]);setHiredTo(t.toISOString().split("T")[0]);}}>This Week</button>
+            {(hiredProcessFilter||hiredPositionFilter||hiredFrom||hiredTo)&&(
+              <button className="btn btn-sm btn-ghost" onClick={()=>{setHiredProcessFilter("");setHiredPositionFilter("");setHiredFrom("");setHiredTo("");}}>✕ Clear Filters</button>
+            )}
+          </div>
           <div className="card">
             <div className="card-header"><div className="card-title">Hired ({hiredList.length})</div><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div>
             <div className="table-wrap">
@@ -3496,6 +3532,7 @@ function HireFlowCandidates({ showToast }) {
               )}
             </div>
           </div>
+          </>
         ):(<>
         <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",marginBottom:16}}>
           <div className="kpi-card">
