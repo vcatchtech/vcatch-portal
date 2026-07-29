@@ -224,7 +224,13 @@ async function supaFetch(path, options = {}) {
     ...options.headers,
   };
   const res = await fetch(`${SUPABASE_URL}${path}`, { ...options, headers });
-  const data = await res.json();
+  // DELETE (and any request without Prefer: return=representation) comes
+  // back 204 with an empty body — res.json() on that throws a SyntaxError,
+  // which was silently aborting multi-step delete sequences partway through
+  // (e.g. candidate_activity got deleted, then the candidates row never was,
+  // because the empty-body parse error threw before that line ran).
+  const raw = await res.text();
+  const data = raw ? JSON.parse(raw) : null;
   if (!res.ok) throw new Error(data?.message || data?.error_description || "Request failed");
   return data;
 }
@@ -3159,6 +3165,7 @@ function HireFlowCandidates({ showToast }) {
 
   const [pageTab,setPageTab]=useState("pipeline");
   const [hiredDateMap,setHiredDateMap]=useState({});
+  const [concludedStageFilter,setConcludedStageFilter]=useState("");
   const [hiredProcessFilter,setHiredProcessFilter]=useState("");
   const [hiredPositionFilter,setHiredPositionFilter]=useState("");
   const [hiredFrom,setHiredFrom]=useState("");
@@ -3194,11 +3201,11 @@ function HireFlowCandidates({ showToast }) {
       });
       setActivitySummary(summary);
 
-      const hiredStageId=stages.find(s=>s.name==="Hired")?.id;
-      if(hiredStageId){
-        const hireEvents=await dbSelect("candidate_activity",`?select=candidate_id,changed_at&type=eq.STAGE_CHANGE&to_stage_id=eq.${hiredStageId}&order=changed_at.desc`);
+      const exitStageIds=stages.filter(s=>s.is_exit_stage).map(s=>s.id);
+      if(exitStageIds.length){
+        const concludeEvents=await dbSelect("candidate_activity",`?select=candidate_id,changed_at&type=eq.STAGE_CHANGE&to_stage_id=in.(${exitStageIds.join(",")})&order=changed_at.desc`);
         const dateMap={};
-        hireEvents.forEach(e=>{if(!dateMap[e.candidate_id])dateMap[e.candidate_id]=e.changed_at;});
+        concludeEvents.forEach(e=>{if(!dateMap[e.candidate_id])dateMap[e.candidate_id]=e.changed_at;});
         setHiredDateMap(dateMap);
       }
     }catch(e){showToast("Failed to load candidates","error");}
@@ -3235,6 +3242,9 @@ function HireFlowCandidates({ showToast }) {
   }
 
   const filtered=candidates.filter(c=>{
+    // Concluded (exit-stage) candidates live in the Concluded Cases tab now,
+    // not the working Pipeline — keeps this view to active cases only.
+    if(stageMap[c.current_stage_id]?.is_exit_stage)return false;
     if(search){
       const q=search.toLowerCase();
       if(!c.name?.toLowerCase().includes(q)&&!c.phone?.includes(q))return false;
@@ -3257,15 +3267,18 @@ function HireFlowCandidates({ showToast }) {
   const pageSafe=Math.min(page,totalPages);
   const paged=filtered.slice((pageSafe-1)*pageSize,pageSafe*pageSize);
 
-  // Simple read-mostly Hired list — same role scoping as everywhere else
-  // (HR sees only their own, Manager sees their team, Admin sees everyone).
-  const hiredStageIdForTab=funnelStages.find(s=>s.name==="Hired")?.id;
-  const hiredList=candidates.filter(c=>{
-    if(c.current_stage_id!==hiredStageIdForTab)return false;
+  // Concluded Cases — every exit-stage candidate (Hired, Rejected, Not
+  // Interested, No Response, or whatever else is marked is_exit_stage),
+  // clickable to open the full candidate modal so stage can still be
+  // changed from here. Same role scoping as everywhere else.
+  const exitStageIdsForTab=funnelStages.filter(s=>s.is_exit_stage).map(s=>s.id);
+  const concludedList=candidates.filter(c=>{
+    if(!exitStageIdsForTab.includes(c.current_stage_id))return false;
     if(role==="HR"){if(c.assigned_to!==myUserId)return false;}
     else if(role==="MANAGER"){if(!(reporteeIds.includes(c.assigned_to)||c.assigned_to===myUserId))return false;}
     if(hiredProcessFilter&&c.process_id!==hiredProcessFilter)return false;
     if(hiredPositionFilter&&c.position_type_id!==hiredPositionFilter)return false;
+    if(concludedStageFilter&&c.current_stage_id!==concludedStageFilter)return false;
     if(hiredFrom||hiredTo){
       const hd=hiredDateMap[c.id];
       if(!hd)return false;
@@ -3275,9 +3288,9 @@ function HireFlowCandidates({ showToast }) {
     }
     return true;
   }).sort((a,b)=>new Date(hiredDateMap[b.id]||0)-new Date(hiredDateMap[a.id]||0));
-  const hiredByProcess=(()=>{
+  const concludedByStage=(()=>{
     const groups={};
-    hiredList.forEach(c=>{const k=processMap[c.process_id]||"—";groups[k]=(groups[k]||0)+1;});
+    concludedList.forEach(c=>{const k=stageMap[c.current_stage_id]?.name||"—";groups[k]=(groups[k]||0)+1;});
     return Object.entries(groups).sort((a,b)=>b[1]-a[1]);
   })();
 
@@ -3533,42 +3546,45 @@ function HireFlowCandidates({ showToast }) {
       <div className="page-content">
         <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
           <button className={`btn btn-sm ${pageTab==="pipeline"?"":"btn-ghost"}`} onClick={()=>setPageTab("pipeline")}>Pipeline</button>
-          <button className={`btn btn-sm ${pageTab==="hired"?"":"btn-ghost"}`} onClick={()=>setPageTab("hired")}>Hired ({hiredList.length})</button>
+          <button className={`btn btn-sm ${pageTab==="concluded"?"":"btn-ghost"}`} onClick={()=>setPageTab("concluded")}>Concluded Cases ({concludedList.length})</button>
           <button className={`btn btn-sm ${pageTab==="ivr"?"":"btn-ghost"}`} onClick={()=>setPageTab("ivr")}>IVR Interested</button>
         </div>
-        {pageTab==="ivr"?<InterestedCandidates showToast={showToast}/>:pageTab==="hired"?(
+        {pageTab==="ivr"?<InterestedCandidates showToast={showToast}/>:pageTab==="concluded"?(
           <>
           <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",marginBottom:16}}>
-            <div className="kpi-card"><div className="kpi-label">Total Hired</div><div className="kpi-value green">{hiredList.length}</div><div className="kpi-sub">{hiredFrom||hiredTo?"Filtered range":"All time"}</div></div>
-            {hiredByProcess.slice(0,4).map(([name,count])=>(
-              <div className="kpi-card" key={name}><div className="kpi-label">{name}</div><div className="kpi-value blue">{count}</div><div className="kpi-sub">Hired</div></div>
+            <div className="kpi-card"><div className="kpi-label">Total Concluded</div><div className="kpi-value green">{concludedList.length}</div><div className="kpi-sub">{hiredFrom||hiredTo?"Filtered range":"All time"}</div></div>
+            {concludedByStage.slice(0,4).map(([name,count])=>(
+              <div className="kpi-card" key={name}><div className="kpi-label">{name}</div><div className="kpi-value blue">{count}</div><div className="kpi-sub">Candidates</div></div>
             ))}
           </div>
           <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+            <FilterSelect value={concludedStageFilter} onChange={setConcludedStageFilter} allLabel="All Outcomes" options={funnelStages.filter(s=>s.is_exit_stage).map(s=>({value:s.id,label:s.name}))}/>
             <FilterSelect value={hiredProcessFilter} onChange={setHiredProcessFilter} allLabel="All Processes" options={processes.map(p=>({value:p.id,label:p.name}))}/>
             <FilterSelect value={hiredPositionFilter} onChange={setHiredPositionFilter} allLabel="All Positions" options={positionTypes.map(p=>({value:p.id,label:p.name}))}/>
-            <input type="date" className="filter-input" value={hiredFrom} onChange={e=>setHiredFrom(e.target.value)} title="Hired from date"/>
-            <input type="date" className="filter-input" value={hiredTo} onChange={e=>setHiredTo(e.target.value)} title="Hired to date"/>
+            <input type="date" className="filter-input" value={hiredFrom} onChange={e=>setHiredFrom(e.target.value)} title="Concluded from date"/>
+            <input type="date" className="filter-input" value={hiredTo} onChange={e=>setHiredTo(e.target.value)} title="Concluded to date"/>
             <button className="btn btn-sm btn-ghost" onClick={()=>{const t=today();setHiredFrom(t);setHiredTo(t);}}>Today</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>{const t=new Date();const f=new Date();f.setDate(t.getDate()-7);setHiredFrom(f.toISOString().split("T")[0]);setHiredTo(t.toISOString().split("T")[0]);}}>This Week</button>
-            {(hiredProcessFilter||hiredPositionFilter||hiredFrom||hiredTo)&&(
-              <button className="btn btn-sm btn-ghost" onClick={()=>{setHiredProcessFilter("");setHiredPositionFilter("");setHiredFrom("");setHiredTo("");}}>✕ Clear Filters</button>
+            {(concludedStageFilter||hiredProcessFilter||hiredPositionFilter||hiredFrom||hiredTo)&&(
+              <button className="btn btn-sm btn-ghost" onClick={()=>{setConcludedStageFilter("");setHiredProcessFilter("");setHiredPositionFilter("");setHiredFrom("");setHiredTo("");}}>✕ Clear Filters</button>
             )}
           </div>
           <div className="card">
-            <div className="card-header"><div className="card-title">Hired ({hiredList.length})</div><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div>
+            <div className="card-header"><div className="card-title">Concluded Cases ({concludedList.length})</div><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div>
             <div className="table-wrap">
-              {loading?<div className="empty-state">Loading...</div>:hiredList.length===0?<div className="empty-state"><div className="empty-icon">⬡</div><div className="empty-title">No hired candidates yet</div></div>:(
+              {loading?<div className="empty-state">Loading...</div>:concludedList.length===0?<div className="empty-state"><div className="empty-icon">⬡</div><div className="empty-title">No concluded cases yet</div></div>:(
                 <table>
-                  <thead><tr><th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Assigned To</th><th>Hired Date</th><th>Linked Opening</th></tr></thead>
-                  <tbody>{hiredList.map(c=>{
+                  <thead><tr><th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Outcome</th><th>Assigned To</th><th>Concluded Date</th><th>Linked Opening</th></tr></thead>
+                  <tbody>{concludedList.map(c=>{
                     const owner=userMap[c.assigned_to];
+                    const stage=stageMap[c.current_stage_id];
                     return(
-                      <tr key={c.id}>
+                      <tr key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer"}}>
                         <td style={{fontWeight:500}}>{c.name}</td>
                         <td style={{fontFamily:"monospace"}}>{c.phone}</td>
                         <td>{processMap[c.process_id]||"—"}</td>
                         <td>{positionMap[c.position_type_id]||"—"}</td>
+                        <td><span className="badge" style={{background:`${T.purple}22`,color:T.purple}}>{stage?.name||"—"}</span></td>
                         <td>{owner?(owner.name||owner.email):"Unassigned"}</td>
                         <td>{hiredDateMap[c.id]?new Date(hiredDateMap[c.id]).toLocaleDateString("en-IN"):"—"}</td>
                         <td>{c.filled_opening_id?"✓ Linked":"—"}</td>
@@ -3612,7 +3628,7 @@ function HireFlowCandidates({ showToast }) {
         </div>
         <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
           <input className="filter-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or phone" style={{maxWidth:220}}/>
-          <FilterSelect value={stageFilter==="ALL"?"":stageFilter} onChange={v=>setStageFilter(v||"ALL")} allLabel="All Stages" options={funnelStages.map(s=>({value:s.id,label:s.name}))}/>
+          <FilterSelect value={stageFilter==="ALL"?"":stageFilter} onChange={v=>setStageFilter(v||"ALL")} allLabel="All Stages" options={funnelStages.filter(s=>!s.is_exit_stage).map(s=>({value:s.id,label:s.name}))}/>
           <FilterSelect value={processFilter==="ALL"?"":processFilter} onChange={v=>setProcessFilter(v||"ALL")} allLabel="All Processes" options={processes.map(p=>({value:p.id,label:p.name}))}/>
           {["ADMIN","MANAGER"].includes(role)&&(
             <FilterSelect value={assigneeFilter} onChange={setAssigneeFilter} allLabel="Everyone" options={[
