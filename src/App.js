@@ -175,7 +175,7 @@ return `
 // ================================================
 // API UTILITIES
 // ================================================
-const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12h absolute session cap — re-login required after this regardless of activity
+const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 1 week absolute session cap — re-login required after this regardless of activity
 
 async function refreshSession() {
   try {
