@@ -2295,6 +2295,8 @@ function PositionOpenings({ showToast }) {
   const [linkChoice,setLinkChoice]=useState({});
   const [expandedOpening,setExpandedOpening]=useState(null);
   const [expandedProgress,setExpandedProgress]=useState(null);
+  const [editingDateId,setEditingDateId]=useState(null);
+  const [editingDateValue,setEditingDateValue]=useState("");
   const [progressCandidates,setProgressCandidates]=useState([]);
   const [attemptCountByCandidate,setAttemptCountByCandidate]=useState({});
   const [progressFunnelStages,setProgressFunnelStages]=useState([]);
@@ -2429,6 +2431,35 @@ function PositionOpenings({ showToast }) {
     catch{showToast("Failed to reopen","error");}
   }
 
+  async function saveOpenedAt(o){
+    if(!editingDateValue){setEditingDateId(null);return;}
+    try{
+      await dbUpdate("position_openings",`id=eq.${o.id}`,{created_at:new Date(editingDateValue+"T00:00:00").toISOString()});
+      showToast("Opened date updated","success");
+      setEditingDateId(null);
+      load();
+    }catch{showToast("Failed to update opened date","error");}
+  }
+
+  function openedAtCell(o){
+    if(editingDateId===o.id){
+      return(
+        <div style={{display:"flex",gap:4,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
+          <input type="date" value={editingDateValue} onChange={e=>setEditingDateValue(e.target.value)} style={{width:130}}/>
+          <button className="btn btn-sm" onClick={()=>saveOpenedAt(o)}>✓</button>
+          <button className="btn btn-sm btn-ghost" onClick={()=>setEditingDateId(null)}>✕</button>
+        </div>
+      );
+    }
+    return(
+      <span
+        style={{cursor:"pointer",borderBottom:"1px dotted currentColor"}}
+        title={(recruiterMap[o.created_by]?`Opened by ${recruiterMap[o.created_by]}`:"")+" — click to change date"}
+        onClick={e=>{e.stopPropagation();setEditingDateId(o.id);setEditingDateValue(o.created_at?new Date(o.created_at).toISOString().split("T")[0]:"");}}
+      >{o.created_at?new Date(o.created_at).toLocaleDateString("en-IN"):"—"} ✎</span>
+    );
+  }
+
   // All filters compose together and drive everything below — KPIs, the
   // avg-days breakdowns, and the Positions table itself — not just the table.
   const hrOptions=[...new Set(Object.values(fillsByOpening).flat().map(c=>c.filled_by).filter(Boolean))];
@@ -2536,7 +2567,7 @@ function PositionOpenings({ showToast }) {
                             {fills.length?[...new Set(fills.map(c=>recruiterMap[c.filled_by]||"—"))].join(", "):"—"}
                           </td>
                           <td><span className={`badge ${o.status==="OPEN"?"badge-green":"badge-gray"}`}>{o.status}</span></td>
-                          <td style={{fontSize:12,color:T.muted}} title={recruiterMap[o.created_by]?`Opened by ${recruiterMap[o.created_by]}`:""}>{o.created_at?new Date(o.created_at).toLocaleDateString("en-IN"):"—"}</td>
+                          <td style={{fontSize:12,color:T.muted}}>{openedAtCell(o)}</td>
                           <td style={{fontSize:12,color:T.muted}}>{o.closed_at?new Date(o.closed_at).toLocaleDateString("en-IN"):"—"}</td>
                           <td style={{fontSize:12,color:T.muted}}>{o.closed_by?recruiterMap[o.closed_by]||"—":"—"}</td>
                           <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={o.note||""}>{o.note||"—"}</td>
@@ -2701,7 +2732,7 @@ function PositionOpenings({ showToast }) {
                           <td>{o.target_count}</td>
                           <td>{filled}</td>
                           <td style={{fontSize:12,color:T.muted}}>{fills.length?[...new Set(fills.map(c=>recruiterMap[c.filled_by]||"—"))].join(", "):"—"}</td>
-                          <td style={{fontSize:12,color:T.muted}}>{new Date(o.created_at).toLocaleDateString("en-IN")}</td>
+                          <td style={{fontSize:12,color:T.muted}}>{openedAtCell(o)}</td>
                           <td style={{fontSize:12,color:T.muted}}>{new Date(o.closed_at).toLocaleDateString("en-IN")}</td>
                           <td style={{fontSize:12,color:T.muted}}>{o.closed_by?recruiterMap[o.closed_by]||"—":"—"}</td>
                           <td>{daysToClose(o).toFixed(1)}</td>
