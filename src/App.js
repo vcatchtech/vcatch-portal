@@ -2229,6 +2229,10 @@ function PositionOpenings({ showToast }) {
   const [hiredCandidates,setHiredCandidates]=useState([]);
   const [linkChoice,setLinkChoice]=useState({});
   const [expandedOpening,setExpandedOpening]=useState(null);
+  const [expandedProgress,setExpandedProgress]=useState(null);
+  const [progressCandidates,setProgressCandidates]=useState([]);
+  const [attemptCountByCandidate,setAttemptCountByCandidate]=useState({});
+  const [progressFunnelStages,setProgressFunnelStages]=useState([]);
   const [loading,setLoading]=useState(false);
   const [statusFilter,setStatusFilter]=useState("OPEN");
   const [companyFilter,setCompanyFilter]=useState("");
@@ -2247,16 +2251,23 @@ function PositionOpenings({ showToast }) {
   async function load(){
     setLoading(true);
     try{
-      const [ops,comps,procs,posTypes,users,cands,stages]=await Promise.all([
+      const [ops,comps,procs,posTypes,users,cands,stages,allCands,attempts]=await Promise.all([
         dbSelect("position_openings","?select=*&order=created_at.desc"),
         dbSelect("companies","?select=*&order=name"),
         dbSelect("processes","?select=*&order=name"),
         dbSelect("position_types","?select=*&order=name"),
         dbSelect("user_roles","?select=id,name,email"),
         dbSelect("candidates","?select=id,name,current_stage_id,filled_opening_id,filled_at,filled_by&filled_opening_id=not.is.null"),
-        dbSelect("funnel_stages","?select=id,name"),
+        dbSelect("funnel_stages","?select=id,name,is_exit_stage"),
+        dbSelect("candidates","?select=id,process_id,position_type_id,current_stage_id"),
+        dbSelect("candidate_activity","?select=candidate_id&is_contact_attempt=eq.true"),
       ]);
       setOpenings(ops);setCompanies(comps);setProcesses(procs);setPositionTypes(posTypes);setRecruiters(users);
+      setProgressCandidates(allCands);
+      setProgressFunnelStages(stages);
+      const attemptCounts={};
+      attempts.forEach(a=>{attemptCounts[a.candidate_id]=(attemptCounts[a.candidate_id]||0)+1;});
+      setAttemptCountByCandidate(attemptCounts);
       const me=users.find(u=>u.email===getEmail());
       myUserId.current=me?.id||null;
       const hiredStageId=stages.find(s=>s.name==="Hired")?.id;
@@ -2285,6 +2296,8 @@ function PositionOpenings({ showToast }) {
     (fillsByOpening[c.filled_opening_id]=fillsByOpening[c.filled_opening_id]||[]).push(c);
   });
   const openOptions=openings.filter(o=>o.status==="OPEN");
+  const allOpeningOptions=openings;
+  const stageMap=Object.fromEntries(progressFunnelStages.map(s=>[s.id,s]));
   function openingLabelFor(o){
     return `${companyMap[o.company_id]||"—"} / ${processMap[o.process_id]||"—"} / ${positionMap[o.position_type_id]||"—"}`;
   }
@@ -2479,9 +2492,35 @@ function PositionOpenings({ showToast }) {
                               <button className="btn btn-sm btn-ghost" onClick={()=>closeOpening(o.id)}>Close</button>:
                               <button className="btn btn-sm btn-ghost" onClick={()=>reopenOpening(o.id)}>Reopen</button>
                             }
+                            <button className="btn btn-sm btn-ghost" onClick={()=>setExpandedProgress(v=>v===o.id?null:o.id)}>{expandedProgress===o.id?"Hide":"Progress"}</button>
                             <button className="btn btn-sm btn-danger" onClick={()=>deleteOpening(o)}>Delete</button>
                           </td>
                         </tr>
+                        {expandedProgress===o.id&&(()=>{
+                          const matching=progressCandidates.filter(c=>c.process_id===o.process_id&&c.position_type_id===o.position_type_id);
+                          return(
+                            <tr key={o.id+"-progress"}>
+                              <td colSpan={12} style={{background:T.mode==="light"?"#FAFAFF":"#181D2A",padding:12}}>
+                                <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Candidates matching this Process/Position ({matching.length}) — matched by Process + Position Type, not tied to this specific opening until hired.</div>
+                                {matching.length===0?<div style={{fontSize:13,color:T.muted}}>No candidates for this Process/Position yet.</div>:(
+                                  <table style={{width:"100%"}}>
+                                    <thead><tr><th>Candidate</th><th>Stage</th><th>Attempts</th></tr></thead>
+                                    <tbody>{matching.map(c=>{
+                                      const stage=stageMap[c.current_stage_id];
+                                      return(
+                                        <tr key={c.id}>
+                                          <td>{c.name}</td>
+                                          <td><span className="badge" style={{background:stage?.is_exit_stage?`${T.purple}22`:`${T.accent}22`,color:stage?.is_exit_stage?T.purple:T.accent}}>{stage?.name||"—"}</span></td>
+                                          <td>{attemptCountByCandidate[c.id]||0}</td>
+                                        </tr>
+                                      );
+                                    })}</tbody>
+                                  </table>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })()}
                         {expandedOpening===o.id&&fills.length>0&&(
                           <tr key={o.id+"-fills"}>
                             <td colSpan={12} style={{background:T.mode==="light"?"#FAFAFF":"#181D2A",padding:12}}>
@@ -2553,7 +2592,7 @@ function PositionOpenings({ showToast }) {
                         <td>
                           <select className="filter-select" value={linkChoice[c.id]||""} onChange={e=>setLinkChoice({...linkChoice,[c.id]:e.target.value})}>
                             <option value="">—</option>
-                            {openOptions.map(o=><option key={o.id} value={o.id}>{openingLabelFor(o)}</option>)}
+                            {allOpeningOptions.map(o=><option key={o.id} value={o.id}>{openingLabelFor(o)}{o.status==="CLOSED"?" (closed)":""}</option>)}
                           </select>
                         </td>
                         <td><button className="btn btn-sm btn-ghost" onClick={()=>linkHire(c.id)}>Link</button></td>
