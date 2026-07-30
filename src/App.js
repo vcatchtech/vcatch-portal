@@ -2029,8 +2029,9 @@ function UserManagement({ showToast }) {
 // Processes / Position Types / Lead Sources share the same simple
 // name + active-toggle shape, same pattern as Caller IDs / Audio Manager.
 // ================================================
-function SimpleRefList({ table, title, placeholder, showToast }) {
+function SimpleRefList({ table, title, placeholder, showToast, candidateField }) {
   const [list,setList]=useState([]);const [name,setName]=useState("");const [adding,setAdding]=useState(false);
+  const [editingId,setEditingId]=useState(null);const [editName,setEditName]=useState("");const [saving,setSaving]=useState(false);
   useEffect(()=>{load();},[]);
   async function load(){try{setList(await dbSelect(table,"?select=*&order=created_at"));}catch{}}
   async function add(){
@@ -2045,6 +2046,14 @@ function SimpleRefList({ table, title, placeholder, showToast }) {
     if(!window.confirm("Remove this entry? Candidates already tagged with it keep the tag — it just won't be selectable for new ones."))return;
     try{await dbDelete(table,`id=eq.${id}`);showToast("Removed","success");load();}catch{showToast("Failed — may be in use","error");}
   }
+  function startEdit(r){setEditingId(r.id);setEditName(r.name);}
+  async function saveEdit(id){
+    const clean=editName.trim();if(!clean){showToast("Name can't be empty","error");return;}
+    setSaving(true);
+    try{await dbUpdate(table,`id=eq.${id}`,{name:clean});showToast("Renamed","success");setEditingId(null);load();}
+    catch{showToast("Failed to rename — name may already exist","error");}
+    finally{setSaving(false);}
+  }
   return(
     <div className="card">
       <div className="card-header"><div className="card-title">{title}</div></div>
@@ -2058,9 +2067,18 @@ function SimpleRefList({ table, title, placeholder, showToast }) {
             <thead><tr><th>Name</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>{list.map(r=>(
               <tr key={r.id}>
-                <td style={{fontWeight:500}}>{r.name}</td>
+                <td style={{fontWeight:500}}>
+                  {editingId===r.id?(
+                    <div style={{display:"flex",gap:6}}>
+                      <input value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveEdit(r.id)} style={{flex:1}}/>
+                      <button className="btn btn-sm" onClick={()=>saveEdit(r.id)} disabled={saving}>Save</button>
+                      <button className="btn btn-sm btn-ghost" onClick={()=>setEditingId(null)}>Cancel</button>
+                    </div>
+                  ):r.name}
+                </td>
                 <td><span className={`badge ${r.is_active?"badge-green":"badge-gray"}`}>{r.is_active?"Active":"Inactive"}</span></td>
                 <td style={{display:"flex",gap:6}}>
+                  {editingId!==r.id&&<button className="btn btn-sm btn-ghost" onClick={()=>startEdit(r)}>Rename</button>}
                   <button className="btn btn-sm btn-ghost" onClick={()=>toggle(r.id,r.is_active)}>{r.is_active?"Deactivate":"Activate"}</button>
                   <button className="btn btn-sm btn-danger" onClick={()=>remove(r.id)}>Remove</button>
                 </td>
@@ -2069,6 +2087,53 @@ function SimpleRefList({ table, title, placeholder, showToast }) {
           </table>
         )}
       </div>
+      {candidateField&&<MergeCandidatesTool table={table} candidateField={candidateField} options={list} showToast={showToast} onDone={load}/>}
+    </div>
+  );
+}
+
+// Moves every candidate from one Process/Position Type to another in one
+// shot -- for when a lookup entry is being retired/merged rather than just
+// renamed (renaming keeps the same id, so it needs no candidate changes at
+// all; this is only for when the id itself is going away).
+function MergeCandidatesTool({ table, candidateField, options, showToast, onDone }) {
+  const [fromId,setFromId]=useState("");
+  const [toId,setToId]=useState("");
+  const [merging,setMerging]=useState(false);
+  async function merge(){
+    if(!fromId||!toId){showToast("Pick both a source and a destination","error");return;}
+    if(fromId===toId){showToast("Source and destination must be different","error");return;}
+    const fromLabel=options.find(o=>o.id===fromId)?.name||"—";
+    const toLabel=options.find(o=>o.id===toId)?.name||"—";
+    if(!window.confirm(`Move every candidate currently tagged "${fromLabel}" to "${toLabel}"? This cannot be undone.`))return;
+    setMerging(true);
+    try{
+      const affected=await dbSelect("candidates",`?select=id&${candidateField}=eq.${fromId}`);
+      if(affected.length){
+        await dbUpdate("candidates",`${candidateField}=eq.${fromId}`,{[candidateField]:toId});
+      }
+      showToast(`${affected.length} candidate(s) moved from "${fromLabel}" to "${toLabel}"`,"success");
+      setFromId("");setToId("");onDone();
+    }catch{showToast("Failed to move candidates","error");}
+    finally{setMerging(false);}
+  }
+  return(
+    <div className="card-body" style={{borderTop:`1px solid ${T.border}`}}>
+      <div style={{fontWeight:600,fontSize:13,marginBottom:8}}>Merge / Move Candidates</div>
+      <div style={{fontSize:12,color:T.muted,marginBottom:12}}>For retiring or splitting an entry — moves every candidate from one value to another. Renaming (above) doesn't need this since the underlying id stays the same.</div>
+      <div className="two-col" style={{marginBottom:12}}>
+        <div className="field" style={{marginBottom:0}}><label>Move candidates from</label>
+          <select value={fromId} onChange={e=>setFromId(e.target.value)}>
+            <option value="">—</option>{options.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}
+          </select>
+        </div>
+        <div className="field" style={{marginBottom:0}}><label>To</label>
+          <select value={toId} onChange={e=>setToId(e.target.value)}>
+            <option value="">—</option>{options.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}
+          </select>
+        </div>
+      </div>
+      <button className="btn btn-sm" onClick={merge} disabled={merging||!fromId||!toId}>{merging?"Moving...":"Move Candidates"}</button>
     </div>
   );
 }
@@ -2259,7 +2324,7 @@ function PositionOpenings({ showToast }) {
         dbSelect("user_roles","?select=id,name,email"),
         dbSelect("candidates","?select=id,name,current_stage_id,filled_opening_id,filled_at,filled_by&filled_opening_id=not.is.null"),
         dbSelect("funnel_stages","?select=id,name,is_exit_stage"),
-        dbSelect("candidates","?select=id,process_id,position_type_id,current_stage_id"),
+        dbSelect("candidates","?select=id,name,process_id,position_type_id,current_stage_id,created_at"),
         dbSelect("candidate_activity","?select=candidate_id&is_contact_attempt=eq.true"),
       ]);
       setOpenings(ops);setCompanies(comps);setProcesses(procs);setPositionTypes(posTypes);setRecruiters(users);
@@ -2497,11 +2562,20 @@ function PositionOpenings({ showToast }) {
                           </td>
                         </tr>
                         {expandedProgress===o.id&&(()=>{
-                          const matching=progressCandidates.filter(c=>c.process_id===o.process_id&&c.position_type_id===o.position_type_id);
+                          // Scoped to candidates who existed while this specific
+                          // opening was actually open — a position can be
+                          // closed and a new one opened later for the same
+                          // Process/Position, and those shouldn't share a pool.
+                          const windowEnd=o.closed_at?new Date(o.closed_at):new Date();
+                          const windowStart=new Date(o.created_at);
+                          const matching=progressCandidates.filter(c=>
+                            c.process_id===o.process_id&&c.position_type_id===o.position_type_id&&
+                            new Date(c.created_at)>=windowStart&&new Date(c.created_at)<=windowEnd
+                          );
                           return(
                             <tr key={o.id+"-progress"}>
                               <td colSpan={12} style={{background:T.mode==="light"?"#FAFAFF":"#181D2A",padding:12}}>
-                                <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Candidates matching this Process/Position ({matching.length}) — matched by Process + Position Type, not tied to this specific opening until hired.</div>
+                                <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Candidates matching this Process/Position, added between {windowStart.toLocaleDateString("en-IN")} and {o.closed_at?windowEnd.toLocaleDateString("en-IN"):"now"} ({matching.length}) — matched by Process + Position Type, not tied to this specific opening until hired.</div>
                                 {matching.length===0?<div style={{fontSize:13,color:T.muted}}>No candidates for this Process/Position yet.</div>:(
                                   <table style={{width:"100%"}}>
                                     <thead><tr><th>Candidate</th><th>Stage</th><th>Attempts</th></tr></thead>
@@ -2672,8 +2746,8 @@ function HireFlowSettings({ showToast }) {
             <button key={id} className={`btn btn-sm ${tab===id?"":"btn-ghost"}`} onClick={()=>setTab(id)}>{label}</button>
           ))}
         </div>
-        {tab==="processes"&&<SimpleRefList table="processes" title="Processes" placeholder="e.g. Cred, Smartcoin, ITI Finance" showToast={showToast}/>}
-        {tab==="positions"&&<SimpleRefList table="position_types" title="Position Types" placeholder="e.g. Calling Executive, Field AM" showToast={showToast}/>}
+        {tab==="processes"&&<SimpleRefList table="processes" title="Processes" placeholder="e.g. Cred, Smartcoin, ITI Finance" showToast={showToast} candidateField="process_id"/>}
+        {tab==="positions"&&<SimpleRefList table="position_types" title="Position Types" placeholder="e.g. Calling Executive, Field AM" showToast={showToast} candidateField="position_type_id"/>}
         {tab==="companies"&&<SimpleRefList table="companies" title="Companies" placeholder="e.g. VCatch, Catch, Epoch Pride" showToast={showToast}/>}
         {tab==="sources"&&<SimpleRefList table="lead_sources" title="Lead Sources" placeholder="e.g. Work India, LinkedIn" showToast={showToast}/>}
         {tab==="reasons"&&<SimpleRefList table="rejection_reasons" title="Rejection / Not Interested Reasons" placeholder="e.g. Salary mismatch, Location" showToast={showToast}/>}
