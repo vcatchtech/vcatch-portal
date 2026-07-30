@@ -3733,17 +3733,27 @@ function HireFlowCandidates({ showToast }) {
               <button className="btn btn-sm btn-ghost" onClick={()=>{setConcludedStageFilter("");setHiredProcessFilter("");setHiredPositionFilter("");setHiredFrom("");setHiredTo("");}}>✕ Clear Filters</button>
             )}
           </div>
+          {selectedIds.length>0&&(
+            <div className="card" style={{display:"flex",gap:8,alignItems:"center",padding:12,marginBottom:16,border:`1.5px solid ${T.accent}`,flexWrap:"wrap"}}>
+              <div style={{fontSize:13,fontWeight:600,color:T.accent}}>{selectedIds.length} selected</div>
+              <button className="btn btn-sm btn-ghost" style={{color:T.accent,borderColor:T.accent}} onClick={bulkSendToIvr} disabled={bulkSendingIvr}>{bulkSendingIvr?"Sending...":"📞 Send to IVR"}</button>
+              <button className="btn btn-sm btn-ghost" onClick={()=>setSelectedIds([])}>Clear</button>
+            </div>
+          )}
           <div className="card">
             <div className="card-header"><div className="card-title">Concluded Cases ({concludedList.length})</div><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div>
             <div className="table-wrap">
               {loading?<div className="empty-state">Loading...</div>:concludedList.length===0?<div className="empty-state"><div className="empty-icon">⬡</div><div className="empty-title">No concluded cases yet</div></div>:(
                 <table>
-                  <thead><tr><th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Outcome</th><th>Assigned To</th><th>Concluded Date</th><th>Linked Opening</th></tr></thead>
+                  <thead><tr><th style={{width:22,padding:"8px 4px"}}></th><th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Outcome</th><th>Assigned To</th><th>Concluded Date</th><th>Linked Opening</th><th>Action</th></tr></thead>
                   <tbody>{concludedList.map(c=>{
                     const owner=userMap[c.assigned_to];
                     const stage=stageMap[c.current_stage_id];
                     return(
                       <tr key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer"}}>
+                        <td style={{padding:"6px 4px"}} onClick={e=>e.stopPropagation()}>
+                          <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={()=>toggleSelect(c.id)}/>
+                        </td>
                         <td style={{fontWeight:500}}>{c.name}</td>
                         <td style={{fontFamily:"monospace"}}>{c.phone}</td>
                         <td>{processMap[c.process_id]||"—"}</td>
@@ -3752,6 +3762,12 @@ function HireFlowCandidates({ showToast }) {
                         <td>{owner?(owner.name||owner.email):"Unassigned"}</td>
                         <td>{hiredDateMap[c.id]?new Date(hiredDateMap[c.id]).toLocaleDateString("en-IN"):"—"}</td>
                         <td>{c.filled_opening_id?"✓ Linked":"—"}</td>
+                        <td onClick={e=>e.stopPropagation()}>
+                          {c.ivr_next_attempt_at?
+                            <span className="badge badge-gray" title={`Scheduled for ${new Date(c.ivr_next_attempt_at).toLocaleString("en-IN")}`}>Scheduled</span>:
+                            <button className="btn btn-sm btn-ghost" onClick={()=>sendToIvrSingle(c)} disabled={sendingIvrIds.includes(c.id)}>{sendingIvrIds.includes(c.id)?"...":"📞 IVR"}</button>
+                          }
+                        </td>
                       </tr>
                     );
                   })}</tbody>
