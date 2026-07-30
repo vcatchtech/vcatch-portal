@@ -2371,20 +2371,8 @@ function PositionOpenings({ showToast }) {
     const openingId=linkChoice[candidateId];
     if(!openingId){showToast("Pick an opening first","error");return;}
     try{
-      await dbUpdate("candidates",`id=eq.${candidateId}`,{filled_opening_id:openingId,filled_at:new Date().toISOString(),filled_by:myUserId.current});
-      const opening=openings.find(o=>o.id===openingId);
-      await dbInsert("candidate_activity",{
-        candidate_id:candidateId,type:"NOTE",is_contact_attempt:false,
-        remark:`Linked to opening: ${companyMap[opening.company_id]} / ${processMap[opening.process_id]} / ${positionMap[opening.position_type_id]}`,
-        changed_by:myUserId.current,
-      });
-      const newCount=(filledCountByOpening[openingId]||0)+1;
-      if(opening.status==="OPEN"&&newCount>=opening.target_count){
-        await dbUpdate("position_openings",`id=eq.${openingId}`,{status:"CLOSED",closed_at:new Date().toISOString(),closed_by:myUserId.current});
-        showToast(`Linked — target headcount reached, position auto-closed`,"success");
-      }else{
-        showToast("Linked","success");
-      }
+      const [result]=await dbRpc("link_candidate_to_opening",{p_candidate_id:candidateId,p_opening_id:openingId,p_actor:myUserId.current});
+      showToast(result?.closed?"Linked — target headcount reached, position auto-closed":"Linked","success");
       load();
     }catch{showToast("Failed to link","error");}
   }
@@ -2801,25 +2789,30 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
   const newStageNeedsReason=newStageIsRejected||newStageIsNotInterested;
 
   const [openOpenings,setOpenOpenings]=useState([]);
-  const [allOpenings,setAllOpenings]=useState([]);
-  const [openingCompanies,setOpeningCompanies]=useState([]);
   const [selectedOpeningId,setSelectedOpeningId]=useState("");
-  const [fillOpeningId,setFillOpeningId]=useState(candidate.filled_opening_id||"");
-  const [savingFillOpening,setSavingFillOpening]=useState(false);
+  // Which of the 3 opening choices is picked at Hired stage-change time —
+  // this is the ONLY place linking happens now; there used to be a second,
+  // always-visible "Fills Which Opening?" field here too, asking the same
+  // question twice on the same screen.
+  const [openingChoice,setOpeningChoice]=useState("none"); // "none" | "existing" | "new"
+  const [newOpeningCompanyId,setNewOpeningCompanyId]=useState(candidate.company_id||"");
+  const [newOpeningProcessId,setNewOpeningProcessId]=useState(candidate.process_id||"");
+  const [newOpeningPositionId,setNewOpeningPositionId]=useState(candidate.position_type_id||"");
+  const [newOpeningTarget,setNewOpeningTarget]=useState(1);
+  const [newOpeningDate,setNewOpeningDate]=useState(new Date().toISOString().split("T")[0]);
 
   useEffect(()=>{
     loadActivity();
-    dbSelect("position_openings","?select=*").then(all=>{setAllOpenings(all);setOpenOpenings(all.filter(o=>o.status==="OPEN"));}).catch(()=>{});
-    dbSelect("companies","?select=id,name").then(setOpeningCompanies).catch(()=>{});
+    dbSelect("position_openings","?select=*&status=eq.OPEN").then(setOpenOpenings).catch(()=>{});
   },[]);
   async function loadActivity(){
     try{setActivity(await dbSelect("candidate_activity",`?select=*&candidate_id=eq.${candidate.id}&order=changed_at.desc`));}catch{}
   }
-  const openingCompanyMap=Object.fromEntries(openingCompanies.map(c=>[c.id,c.name]));
-  const openingProcessMap=Object.fromEntries(processes.map(p=>[p.id,p.name]));
-  const openingPositionMap=Object.fromEntries(positionTypes.map(p=>[p.id,p.name]));
+  const companyMap=Object.fromEntries(companies.map(c=>[c.id,c.name]));
+  const processMap=Object.fromEntries(processes.map(p=>[p.id,p.name]));
+  const positionMap=Object.fromEntries(positionTypes.map(p=>[p.id,p.name]));
   function openingLabel(o){
-    return `${openingCompanyMap[o.company_id]||"—"} / ${openingProcessMap[o.process_id]||"—"} / ${openingPositionMap[o.position_type_id]||"—"}`;
+    return `${companyMap[o.company_id]||"—"} / ${processMap[o.process_id]||"—"} / ${positionMap[o.position_type_id]||"—"}`;
   }
 
   async function saveRemark(){
@@ -2830,36 +2823,6 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
       onChanged();
     }catch{showToast("Failed to save remark","error");}
     finally{setSavingRemark(false);}
-  }
-
-  async function saveFillOpening(){
-    setSavingFillOpening(true);
-    try{
-      if(fillOpeningId){
-        const opening=allOpenings.find(o=>o.id===fillOpeningId);
-        await dbUpdate("candidates",`id=eq.${candidate.id}`,{filled_opening_id:fillOpeningId,filled_at:new Date().toISOString(),filled_by:myUserId});
-        await dbInsert("candidate_activity",{
-          candidate_id:candidate.id,type:"NOTE",is_contact_attempt:false,
-          remark:`Linked to opening: ${openingLabel(opening)}`,changed_by:myUserId,
-        });
-        const filledNow=await dbSelect("candidates",`?select=id&filled_opening_id=eq.${fillOpeningId}`);
-        if(opening?.status==="OPEN"&&filledNow.length>=opening.target_count){
-          await dbUpdate("position_openings",`id=eq.${fillOpeningId}`,{status:"CLOSED",closed_at:new Date().toISOString(),closed_by:myUserId});
-          showToast("Linked — target headcount reached, position auto-closed","success");
-        }else{
-          showToast("Linked","success");
-        }
-      }else{
-        await dbUpdate("candidates",`id=eq.${candidate.id}`,{filled_opening_id:null,filled_at:null,filled_by:null});
-        await dbInsert("candidate_activity",{
-          candidate_id:candidate.id,type:"NOTE",is_contact_attempt:false,
-          remark:"Unlinked from opening",changed_by:myUserId,
-        });
-        showToast("Unlinked","success");
-      }
-      onChanged();loadActivity();
-    }catch{showToast("Failed to update opening link","error");}
-    finally{setSavingFillOpening(false);}
   }
 
   async function saveDetails(){
@@ -2883,78 +2846,42 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
     if(!newStage||newStage===candidate.current_stage_id){showToast("Pick a different stage first","error");return;}
     if(newStageNeedsReason&&!rejectionReasonId){showToast(newStageIsRejected?"Pick a rejection reason":"Pick a reason","error");return;}
     if(newStageIsInterview&&!interviewAt){showToast("Pick when the interview is scheduled","error");return;}
+    if(newStageIsHired&&openingChoice==="existing"&&!selectedOpeningId){showToast("Pick an opening, or switch to Not Linked / Open a New Position","error");return;}
+    if(newStageIsHired&&openingChoice==="new"&&(!newOpeningCompanyId||!newOpeningProcessId||!newOpeningPositionId)){showToast("Pick Company, Process, and Position for the new opening","error");return;}
     setBusy(true);
     try{
       const update={current_stage_id:newStage,updated_at:new Date().toISOString(),remark:remarkText.trim()||null};
       if(newStageNeedsReason)update.rejection_reason_id=rejectionReasonId;
       if(newStageIsInterview)update.interview_scheduled_at=new Date(interviewAt).toISOString();
-      if(newStageIsHired&&selectedOpeningId){update.filled_opening_id=selectedOpeningId;update.filled_at=new Date().toISOString();update.filled_by=myUserId;}
       await dbUpdate("candidates",`id=eq.${candidate.id}`,update);
       const reasonLabel=newStageNeedsReason?rejectionReasons.find(r=>r.id===rejectionReasonId)?.name:null;
       const interviewLabel=newStageIsInterview?`Interview scheduled for ${new Date(interviewAt).toLocaleString("en-IN")}`:null;
-      const openingLabelText=newStageIsHired&&selectedOpeningId?`Fills opening: ${openingLabel(openOpenings.find(o=>o.id===selectedOpeningId))}`:null;
-      const remarkParts=[reasonLabel||interviewLabel||openingLabelText,stageRemark.trim()].filter(Boolean);
+      const openingNote=newStageIsHired&&openingChoice==="existing"?`Fills opening: ${openingLabel(openOpenings.find(o=>o.id===selectedOpeningId))}`:
+        newStageIsHired&&openingChoice==="new"?`Opens new position: ${companyMap[newOpeningCompanyId]} / ${processMap[newOpeningProcessId]} / ${positionMap[newOpeningPositionId]}`:null;
+      const remarkParts=[reasonLabel||interviewLabel||openingNote,stageRemark.trim()].filter(Boolean);
       await dbInsert("candidate_activity",{
         candidate_id:candidate.id,type:"STAGE_CHANGE",is_contact_attempt:false,
         from_stage_id:candidate.current_stage_id,to_stage_id:newStage,
         remark:remarkParts.length?remarkParts.join(" — "):null,
         changed_by:myUserId,
       });
-      if(newStageIsHired&&selectedOpeningId){
-        const opening=openOpenings.find(o=>o.id===selectedOpeningId);
-        const filledNow=await dbSelect("candidates",`?select=id&filled_opening_id=eq.${selectedOpeningId}`);
-        if(opening&&filledNow.length>=opening.target_count){
-          await dbUpdate("position_openings",`id=eq.${selectedOpeningId}`,{status:"CLOSED",closed_at:new Date().toISOString(),closed_by:myUserId});
-          showToast("Stage updated — target headcount reached, position auto-closed","success");
-        }else{
-          showToast("Stage updated","success");
-        }
-      }else if(newStageIsHired&&!selectedOpeningId&&!candidate.filled_opening_id){
-        // HR didn't manually pick an opening — auto-link to a matching OPEN
-        // one, or auto-create it, so hiring never depends on someone having
-        // remembered to open a requisition first.
-        await autoLinkOnHire();
+      if(newStageIsHired&&openingChoice==="existing"){
+        const [result]=await dbRpc("link_candidate_to_opening",{p_candidate_id:candidate.id,p_opening_id:selectedOpeningId,p_actor:myUserId});
+        showToast(result?.closed?"Stage updated — target headcount reached, position auto-closed":"Stage updated — linked","success");
+      }else if(newStageIsHired&&openingChoice==="new"){
+        const [result]=await dbRpc("auto_link_or_create_opening",{
+          p_candidate_id:candidate.id,p_company_id:newOpeningCompanyId,p_process_id:newOpeningProcessId,
+          p_position_type_id:newOpeningPositionId,p_actor:myUserId,
+          p_opened_at:new Date(newOpeningDate).toISOString(),p_target_count:Number(newOpeningTarget)||1,
+        });
+        showToast(result?.closed?"Stage updated — position opened, target already reached, auto-closed":"Stage updated — position opened and linked","success");
       }else{
         showToast("Stage updated","success");
       }
-      setStageRemark("");setRejectionReasonId("");setInterviewAt("");setSelectedOpeningId("");
+      setStageRemark("");setRejectionReasonId("");setInterviewAt("");setSelectedOpeningId("");setOpeningChoice("none");
       onChanged();loadActivity();
     }catch{showToast("Failed to update stage","error");}
     finally{setBusy(false);}
-  }
-
-  async function autoLinkOnHire(){
-    if(!form.company_id){
-      showToast("Stage updated — no Company set, so this couldn't be auto-linked to a position. Set Company in Candidate Details, then link via Fills Which Opening.","warn");
-      return;
-    }
-    try{
-      const match=allOpenings.find(o=>o.status==="OPEN"&&o.company_id===form.company_id&&o.process_id===form.process_id&&o.position_type_id===form.position_type_id);
-      let opening=match;
-      if(!opening){
-        const dateStr=window.prompt("No open requisition found for this Company/Process/Position. When was this position actually opened? (YYYY-MM-DD)",new Date().toISOString().split("T")[0]);
-        if(!dateStr){showToast("Stage updated — position not auto-created (cancelled). Link manually via Fills Which Opening.","warn");return;}
-        const parsed=new Date(dateStr);
-        if(isNaN(parsed.getTime())){showToast("Stage updated — invalid date, position not auto-created. Link manually via Fills Which Opening.","warn");return;}
-        const created=await dbInsert("position_openings",{
-          company_id:form.company_id,process_id:form.process_id,position_type_id:form.position_type_id,
-          target_count:1,status:"OPEN",created_by:myUserId,created_at:parsed.toISOString(),
-        });
-        opening=created[0];
-      }
-      await dbUpdate("candidates",`id=eq.${candidate.id}`,{filled_opening_id:opening.id,filled_at:new Date().toISOString(),filled_by:myUserId});
-      await dbInsert("candidate_activity",{
-        candidate_id:candidate.id,type:"NOTE",is_contact_attempt:false,
-        remark:`Auto-${match?"linked to":"created and linked to"} opening: ${openingLabel(opening)}`,changed_by:myUserId,
-      });
-      const filledNow=await dbSelect("candidates",`?select=id&filled_opening_id=eq.${opening.id}`);
-      if(filledNow.length>=opening.target_count){
-        await dbUpdate("position_openings",`id=eq.${opening.id}`,{status:"CLOSED",closed_at:new Date().toISOString(),closed_by:myUserId});
-        showToast(`Stage updated — auto-${match?"linked":"created"} opening (${openingLabel(opening)}), target reached, auto-closed`,"success");
-      }else{
-        showToast(`Stage updated — auto-${match?"linked to":"created"} opening: ${openingLabel(opening)}`,"success");
-      }
-    }catch{showToast("Stage updated, but auto-linking to a position failed — link manually via Fills Which Opening","error");}
   }
 
   async function logAttempt(){
@@ -3090,20 +3017,6 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
               <button className="btn btn-sm" onClick={saveRemark} disabled={savingRemark||remarkText===(candidate.remark||"")}>Save</button>
             </div>
           </div>
-          {currentStage?.name==="Hired"&&(
-            <div className="field" style={{marginBottom:14}}>
-              <label>Fills Which Opening?</label>
-              <div style={{display:"flex",gap:8}}>
-                <select value={fillOpeningId} onChange={e=>setFillOpeningId(e.target.value)} style={{flex:1}}>
-                  <option value="">— Not linked to an opening —</option>
-                  {(fillOpeningId&&!openOpenings.some(o=>o.id===fillOpeningId)?[allOpenings.find(o=>o.id===fillOpeningId)].filter(Boolean):[]).concat(openOpenings).map(o=>
-                    <option key={o.id} value={o.id}>{openingLabel(o)}{o.status==="CLOSED"?" (closed)":""}</option>
-                  )}
-                </select>
-                <button className="btn btn-sm" onClick={saveFillOpening} disabled={savingFillOpening||fillOpeningId===(candidate.filled_opening_id||"")}>Save</button>
-              </div>
-            </div>
-          )}
           <div className="two-col" style={{marginBottom:8}}>
             <div className="field" style={{marginBottom:0}}><label>Move To</label>
               <select value={newStage} onChange={e=>setNewStage(e.target.value)}>
@@ -3121,11 +3034,44 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
                 <input type="datetime-local" value={interviewAt} onChange={e=>setInterviewAt(e.target.value)}/>
               </div>
             ):newStageIsHired?(
-              <div className="field" style={{marginBottom:0}}><label>Fills Which Opening? (optional)</label>
-                <select value={selectedOpeningId} onChange={e=>setSelectedOpeningId(e.target.value)}>
-                  <option value="">— Not linked to an opening —</option>
-                  {openOpenings.map(o=><option key={o.id} value={o.id}>{openingLabel(o)}</option>)}
-                </select>
+              <div className="field" style={{marginBottom:0,gridColumn:"1 / -1"}}>
+                <label>Fills Which Opening?</label>
+                <div style={{display:"flex",gap:14,margin:"4px 0 8px",fontSize:13}}>
+                  <label style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer"}}><input type="radio" checked={openingChoice==="none"} onChange={()=>setOpeningChoice("none")}/> Not linked</label>
+                  <label style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer"}}><input type="radio" checked={openingChoice==="existing"} onChange={()=>setOpeningChoice("existing")}/> Link an open position</label>
+                  <label style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer"}}><input type="radio" checked={openingChoice==="new"} onChange={()=>setOpeningChoice("new")}/> Open a new position</label>
+                </div>
+                {openingChoice==="existing"&&(
+                  <select value={selectedOpeningId} onChange={e=>setSelectedOpeningId(e.target.value)}>
+                    <option value="">— Pick an opening —</option>
+                    {openOpenings.map(o=><option key={o.id} value={o.id}>{openingLabel(o)}</option>)}
+                  </select>
+                )}
+                {openingChoice==="new"&&(
+                  <div className="two-col">
+                    <div className="field" style={{marginBottom:0}}><label>Company</label>
+                      <select value={newOpeningCompanyId} onChange={e=>setNewOpeningCompanyId(e.target.value)}>
+                        <option value="">—</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="field" style={{marginBottom:0}}><label>Process</label>
+                      <select value={newOpeningProcessId} onChange={e=>setNewOpeningProcessId(e.target.value)}>
+                        <option value="">—</option>{processes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="field" style={{marginBottom:0}}><label>Position Type</label>
+                      <select value={newOpeningPositionId} onChange={e=>setNewOpeningPositionId(e.target.value)}>
+                        <option value="">—</option>{positionTypes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="field" style={{marginBottom:0}}><label>Target Headcount</label>
+                      <input type="number" min="1" value={newOpeningTarget} onChange={e=>setNewOpeningTarget(e.target.value)}/>
+                    </div>
+                    <div className="field" style={{marginBottom:0}}><label>Opened On</label>
+                      <input type="date" value={newOpeningDate} onChange={e=>setNewOpeningDate(e.target.value)}/>
+                    </div>
+                  </div>
+                )}
               </div>
             ):(
               <div className="field" style={{marginBottom:0}}><label>Sub-disposition (activity log note)</label><input value={stageRemark} onChange={e=>setStageRemark(e.target.value)} placeholder="Why the stage is changing"/></div>
@@ -3765,7 +3711,7 @@ function HireFlowCandidates({ showToast }) {
                         <td onClick={e=>e.stopPropagation()}>
                           {c.ivr_next_attempt_at?
                             <span className="badge badge-gray" title={`Scheduled for ${new Date(c.ivr_next_attempt_at).toLocaleString("en-IN")}`}>Scheduled</span>:
-                            <button className="btn btn-sm btn-ghost" onClick={()=>sendToIvrSingle(c)} disabled={sendingIvrIds.includes(c.id)}>{sendingIvrIds.includes(c.id)?"...":"📞 IVR"}</button>
+                            <button className="btn btn-sm btn-ghost" onClick={()=>sendToIvrSingle(c)} disabled={sendingIvrIds.includes(c.id)}>{sendingIvrIds.includes(c.id)?"...":"📞 Send to IVR"}</button>
                           }
                         </td>
                       </tr>
@@ -3900,7 +3846,7 @@ function HireFlowCandidates({ showToast }) {
                       <td onClick={e=>e.stopPropagation()}>
                         {c.ivr_next_attempt_at?
                           <span className="badge badge-gray" title={`Scheduled for ${new Date(c.ivr_next_attempt_at).toLocaleString("en-IN")}`}>Scheduled</span>:
-                          <button className="btn btn-sm btn-ghost" onClick={()=>sendToIvrSingle(c)} disabled={sendingIvrIds.includes(c.id)}>{sendingIvrIds.includes(c.id)?"...":"📞 IVR"}</button>
+                          <button className="btn btn-sm btn-ghost" onClick={()=>sendToIvrSingle(c)} disabled={sendingIvrIds.includes(c.id)}>{sendingIvrIds.includes(c.id)?"...":"📞 Send to IVR"}</button>
                         }
                       </td>
                     </tr>
@@ -4247,7 +4193,7 @@ export default function App() {
   const allNav=[
     {id:"dashboard",label:"Dashboard",icon:"▦",roles:["ADMIN","MANAGER","HR","CEO"]},
     {id:"hireflow",label:"Hire Flow",icon:"⬡",roles:["ADMIN","MANAGER","HR"]},
-    {id:"openings",label:"Position Openings",icon:"▣",roles:["ADMIN","MANAGER","CEO"]},
+    {id:"openings",label:"Position Openings",icon:"▣",roles:["ADMIN","MANAGER","HR","CEO"]},
     {id:"campaigns",label:"IVR Campaigns",icon:"◔",roles:["ADMIN","MANAGER"]},
     {id:"leads",label:"Leads",icon:"☰",roles:["ADMIN","MANAGER","HR"]},
     {id:"interested",label:"IVR Interested Candidates",icon:"☆",roles:["ADMIN","MANAGER","HR"]},
@@ -4317,7 +4263,7 @@ export default function App() {
           {page==="audio"&&["ADMIN","MANAGER"].includes(role)&&<AudioManager showToast={showToast}/>}
           {page==="logs"&&role!=="CEO"&&<CallLogs showToast={showToast}/>}
           {page==="users"&&role==="ADMIN"&&<UserManagement showToast={showToast}/>}
-          {page==="openings"&&["ADMIN","MANAGER","CEO"].includes(role)&&<PositionOpenings showToast={showToast}/>}
+          {page==="openings"&&["ADMIN","MANAGER","HR","CEO"].includes(role)&&<PositionOpenings showToast={showToast}/>}
         </div>
       </div>
       {toasts[0]&&<Toast key={toasts[0].id} msg={toasts[0].msg} type={toasts[0].type} onClose={()=>setToasts(q=>q.slice(1))}/>}
