@@ -2569,10 +2569,10 @@ function PositionOpenings({ showToast }) {
                 {!loading&&filtered.length===0?<div className="empty-state"><div className="empty-icon">▣</div><div className="empty-title">No positions here</div></div>:(
                   <table style={{tableLayout:"fixed"}}>
                     <colgroup>
-                      <col style={{width:"9%"}}/><col style={{width:"9%"}}/><col style={{width:"9%"}}/>
-                      <col style={{width:"6%"}}/><col style={{width:"6%"}}/><col style={{width:"8%"}}/>
-                      <col style={{width:"7%"}}/><col style={{width:"9%"}}/><col style={{width:"8%"}}/>
-                      <col style={{width:"8%"}}/><col style={{width:"9%"}}/><col style={{width:"12%"}}/>
+                      <col style={{width:"8%"}}/><col style={{width:"9%"}}/><col style={{width:"7%"}}/>
+                      <col style={{width:"5%"}}/><col style={{width:"5%"}}/><col style={{width:"7%"}}/>
+                      <col style={{width:"5%"}}/><col style={{width:"8%"}}/><col style={{width:"5%"}}/>
+                      <col style={{width:"5%"}}/><col style={{width:"6%"}}/><col style={{width:"30%"}}/>
                     </colgroup>
                     <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Status</th><th>Opened At</th><th>Closed At</th><th>Closed By</th><th>Note</th><th>Actions</th></tr></thead>
                     <tbody>{loading?<SkeletonRows cols={12}/>:filtered.map(o=>{
@@ -2601,7 +2601,7 @@ function PositionOpenings({ showToast }) {
                           <td style={{fontSize:12,color:T.muted,...cellTrunc}}>{o.closed_at?new Date(o.closed_at).toLocaleDateString("en-IN"):"—"}</td>
                           <td style={{fontSize:12,color:T.muted,...cellTrunc}}>{o.closed_by?recruiterMap[o.closed_by]||"—":"—"}</td>
                           <td style={{fontSize:12,color:T.muted,...cellTrunc}} title={o.note||""}>{o.note||"—"}</td>
-                          <td style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          <td style={{display:"flex",gap:6,flexWrap:"nowrap",padding:"13px 10px"}}>
                             {o.status==="OPEN"?
                               <button className="btn btn-sm btn-ghost" onClick={()=>closeOpening(o.id)}>Close</button>:
                               <button className="btn btn-sm btn-ghost" onClick={()=>reopenOpening(o.id)}>Reopen</button>
@@ -2751,10 +2751,10 @@ function PositionOpenings({ showToast }) {
                 {closedOnes.length===0?<div className="empty-state"><div className="empty-icon">▣</div><div className="empty-title">No closed positions here</div></div>:(
                   <table style={{tableLayout:"fixed"}}>
                     <colgroup>
-                      <col style={{width:"9%"}}/><col style={{width:"9%"}}/><col style={{width:"9%"}}/>
-                      <col style={{width:"6%"}}/><col style={{width:"6%"}}/><col style={{width:"8%"}}/>
-                      <col style={{width:"9%"}}/><col style={{width:"8%"}}/><col style={{width:"8%"}}/>
-                      <col style={{width:"9%"}}/><col style={{width:"9%"}}/><col style={{width:"10%"}}/>
+                      <col style={{width:"8%"}}/><col style={{width:"8%"}}/><col style={{width:"8%"}}/>
+                      <col style={{width:"5%"}}/><col style={{width:"5%"}}/><col style={{width:"7%"}}/>
+                      <col style={{width:"9%"}}/><col style={{width:"7%"}}/><col style={{width:"7%"}}/>
+                      <col style={{width:"7%"}}/><col style={{width:"8%"}}/><col style={{width:"21%"}}/>
                     </colgroup>
                     <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Opened At</th><th>Closed At</th><th>Closed By</th><th>Days to Close</th><th>Note</th><th>Actions</th></tr></thead>
                     <tbody>{closedOnes.slice().sort((a,b)=>new Date(b.closed_at)-new Date(a.closed_at)).map(o=>{
