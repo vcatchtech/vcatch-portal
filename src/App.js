@@ -71,6 +71,20 @@ return `
   .btn-amber{background:${t.amber};color:#fff;}
   .btn-purple{background:${t.purple};color:#fff;}
   .btn-full{width:100%;justify-content:center;}
+  .date-edit{display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:3px 7px;margin:-3px -7px;border-radius:6px;transition:background 0.15s ${ease};}
+  .date-edit:hover{background:${t.mode==="light"?t.bg:"#181D2A"};}
+  .date-edit .pencil{opacity:0;transition:opacity 0.15s ${ease},color 0.15s ${ease};color:${t.muted};display:inline-flex;flex-shrink:0;}
+  .date-edit:hover .pencil{opacity:1;color:${t.accent};}
+  .date-edit-form{display:inline-flex;align-items:center;gap:5px;}
+  .date-edit-form input[type=date]{width:auto;padding:4px 8px;font-size:12px;border-radius:6px;border:1.5px solid ${t.border};background:${t.inputBg};color:${t.text};outline:none;transition:border-color 0.15s ${ease},box-shadow 0.15s ${ease};}
+  .date-edit-form input[type=date]:hover{border-color:${t.mode==="light"?"#D5D9E5":"#323952"};}
+  .date-edit-form input[type=date]:focus{border-color:${t.accent};box-shadow:0 0 0 3px ${t.accentDim};}
+  .icon-btn{width:22px;height:22px;border-radius:6px;border:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background 0.15s ${ease},color 0.15s ${ease},transform 0.1s ${ease};}
+  .icon-btn:active{transform:scale(0.9);}
+  .icon-btn-confirm{background:${t.greenDim};color:${t.green};}
+  .icon-btn-confirm:hover{background:${t.green};color:#fff;}
+  .icon-btn-cancel{background:${t.mode==="light"?t.bg:"#181D2A"};color:${t.muted};}
+  .icon-btn-cancel:hover{background:${t.redDim};color:${t.red};}
   .err{color:${t.red};font-size:13px;margin-top:10px;text-align:center;}
   .warn{color:${t.amber};font-size:12px;margin-top:6px;display:flex;align-items:center;gap:6px;}
   .app{display:flex;height:100vh;overflow:hidden;}
@@ -2444,19 +2458,28 @@ function PositionOpenings({ showToast }) {
   function openedAtCell(o){
     if(editingDateId===o.id){
       return(
-        <div style={{display:"flex",gap:4,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
-          <input type="date" value={editingDateValue} onChange={e=>setEditingDateValue(e.target.value)} style={{width:130}}/>
-          <button className="btn btn-sm" onClick={()=>saveOpenedAt(o)}>✓</button>
-          <button className="btn btn-sm btn-ghost" onClick={()=>setEditingDateId(null)}>✕</button>
+        <div className="date-edit-form" onClick={e=>e.stopPropagation()}>
+          <input type="date" value={editingDateValue} onChange={e=>setEditingDateValue(e.target.value)} autoFocus/>
+          <button className="icon-btn icon-btn-confirm" title="Save" onClick={()=>saveOpenedAt(o)}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </button>
+          <button className="icon-btn icon-btn-cancel" title="Cancel" onClick={()=>setEditingDateId(null)}>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
         </div>
       );
     }
     return(
       <span
-        style={{cursor:"pointer",borderBottom:"1px dotted currentColor"}}
+        className="date-edit"
         title={(recruiterMap[o.created_by]?`Opened by ${recruiterMap[o.created_by]}`:"")+" — click to change date"}
         onClick={e=>{e.stopPropagation();setEditingDateId(o.id);setEditingDateValue(o.created_at?new Date(o.created_at).toISOString().split("T")[0]:"");}}
-      >{o.created_at?new Date(o.created_at).toLocaleDateString("en-IN"):"—"} ✎</span>
+      >
+        {o.created_at?new Date(o.created_at).toLocaleDateString("en-IN"):"—"}
+        <span className="pencil">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        </span>
+      </span>
     );
   }
 
@@ -2544,18 +2567,25 @@ function PositionOpenings({ showToast }) {
               </div>
               <div className="table-wrap">
                 {!loading&&filtered.length===0?<div className="empty-state"><div className="empty-icon">▣</div><div className="empty-title">No positions here</div></div>:(
-                  <table>
+                  <table style={{tableLayout:"fixed"}}>
+                    <colgroup>
+                      <col style={{width:"9%"}}/><col style={{width:"9%"}}/><col style={{width:"9%"}}/>
+                      <col style={{width:"6%"}}/><col style={{width:"6%"}}/><col style={{width:"8%"}}/>
+                      <col style={{width:"7%"}}/><col style={{width:"9%"}}/><col style={{width:"8%"}}/>
+                      <col style={{width:"8%"}}/><col style={{width:"9%"}}/><col style={{width:"12%"}}/>
+                    </colgroup>
                     <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Status</th><th>Opened At</th><th>Closed At</th><th>Closed By</th><th>Note</th><th>Actions</th></tr></thead>
                     <tbody>{loading?<SkeletonRows cols={12}/>:filtered.map(o=>{
                       const filled=filledCountByOpening[o.id]||0;
                       const fills=(fillsByOpening[o.id]||[]).slice().sort((a,b)=>new Date(b.filled_at||0)-new Date(a.filled_at||0));
                       const fillSummary=fills.map(c=>`${c.name} (${recruiterMap[c.filled_by]||"—"}, ${c.filled_at?new Date(c.filled_at).toLocaleDateString("en-IN"):"—"})`).join("\n");
+                      const cellTrunc={overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"};
                       return(
                         <Fragment key={o.id}>
                         <tr>
-                          <td style={{fontWeight:500}}>{companyMap[o.company_id]||"—"}</td>
-                          <td>{processMap[o.process_id]||"—"}</td>
-                          <td>{positionMap[o.position_type_id]||"—"}</td>
+                          <td style={{fontWeight:500,...cellTrunc}}>{companyMap[o.company_id]||"—"}</td>
+                          <td style={cellTrunc}>{processMap[o.process_id]||"—"}</td>
+                          <td style={cellTrunc}>{positionMap[o.position_type_id]||"—"}</td>
                           <td>{o.target_count}</td>
                           <td>
                             <span
@@ -2563,15 +2593,15 @@ function PositionOpenings({ showToast }) {
                               onClick={()=>fills.length&&setExpandedOpening(v=>v===o.id?null:o.id)}
                             >{filled}</span>
                           </td>
-                          <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={fillSummary}>
+                          <td style={{fontSize:12,color:T.muted,...cellTrunc}} title={fillSummary}>
                             {fills.length?[...new Set(fills.map(c=>recruiterMap[c.filled_by]||"—"))].join(", "):"—"}
                           </td>
                           <td><span className={`badge ${o.status==="OPEN"?"badge-green":"badge-gray"}`}>{o.status}</span></td>
                           <td style={{fontSize:12,color:T.muted}}>{openedAtCell(o)}</td>
-                          <td style={{fontSize:12,color:T.muted}}>{o.closed_at?new Date(o.closed_at).toLocaleDateString("en-IN"):"—"}</td>
-                          <td style={{fontSize:12,color:T.muted}}>{o.closed_by?recruiterMap[o.closed_by]||"—":"—"}</td>
-                          <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={o.note||""}>{o.note||"—"}</td>
-                          <td style={{display:"flex",gap:6}}>
+                          <td style={{fontSize:12,color:T.muted,...cellTrunc}}>{o.closed_at?new Date(o.closed_at).toLocaleDateString("en-IN"):"—"}</td>
+                          <td style={{fontSize:12,color:T.muted,...cellTrunc}}>{o.closed_by?recruiterMap[o.closed_by]||"—":"—"}</td>
+                          <td style={{fontSize:12,color:T.muted,...cellTrunc}} title={o.note||""}>{o.note||"—"}</td>
+                          <td style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                             {o.status==="OPEN"?
                               <button className="btn btn-sm btn-ghost" onClick={()=>closeOpening(o.id)}>Close</button>:
                               <button className="btn btn-sm btn-ghost" onClick={()=>reopenOpening(o.id)}>Reopen</button>
@@ -2719,27 +2749,34 @@ function PositionOpenings({ showToast }) {
               <div className="card-header"><div className="card-title">Closed Positions ({closedOnes.length})</div></div>
               <div className="table-wrap">
                 {closedOnes.length===0?<div className="empty-state"><div className="empty-icon">▣</div><div className="empty-title">No closed positions here</div></div>:(
-                  <table>
+                  <table style={{tableLayout:"fixed"}}>
+                    <colgroup>
+                      <col style={{width:"9%"}}/><col style={{width:"9%"}}/><col style={{width:"9%"}}/>
+                      <col style={{width:"6%"}}/><col style={{width:"6%"}}/><col style={{width:"8%"}}/>
+                      <col style={{width:"9%"}}/><col style={{width:"8%"}}/><col style={{width:"8%"}}/>
+                      <col style={{width:"9%"}}/><col style={{width:"9%"}}/><col style={{width:"10%"}}/>
+                    </colgroup>
                     <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Opened At</th><th>Closed At</th><th>Closed By</th><th>Days to Close</th><th>Note</th><th>Actions</th></tr></thead>
                     <tbody>{closedOnes.slice().sort((a,b)=>new Date(b.closed_at)-new Date(a.closed_at)).map(o=>{
                       const filled=filledCountByOpening[o.id]||0;
                       const fills=fillsByOpening[o.id]||[];
+                      const cellTrunc={overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"};
                       return(
                         <tr key={o.id}>
-                          <td style={{fontWeight:500}}>{companyMap[o.company_id]||"—"}</td>
-                          <td>{processMap[o.process_id]||"—"}</td>
-                          <td>{positionMap[o.position_type_id]||"—"}</td>
+                          <td style={{fontWeight:500,...cellTrunc}}>{companyMap[o.company_id]||"—"}</td>
+                          <td style={cellTrunc}>{processMap[o.process_id]||"—"}</td>
+                          <td style={cellTrunc}>{positionMap[o.position_type_id]||"—"}</td>
                           <td>{o.target_count}</td>
                           <td>{filled}</td>
-                          <td style={{fontSize:12,color:T.muted}}>{fills.length?[...new Set(fills.map(c=>recruiterMap[c.filled_by]||"—"))].join(", "):"—"}</td>
+                          <td style={{fontSize:12,color:T.muted,...cellTrunc}}>{fills.length?[...new Set(fills.map(c=>recruiterMap[c.filled_by]||"—"))].join(", "):"—"}</td>
                           <td style={{fontSize:12,color:T.muted}}>{openedAtCell(o)}</td>
-                          <td style={{fontSize:12,color:T.muted}}>{new Date(o.closed_at).toLocaleDateString("en-IN")}</td>
-                          <td style={{fontSize:12,color:T.muted}}>{o.closed_by?recruiterMap[o.closed_by]||"—":"—"}</td>
+                          <td style={{fontSize:12,color:T.muted,...cellTrunc}}>{new Date(o.closed_at).toLocaleDateString("en-IN")}</td>
+                          <td style={{fontSize:12,color:T.muted,...cellTrunc}}>{o.closed_by?recruiterMap[o.closed_by]||"—":"—"}</td>
                           <td>{daysToClose(o).toFixed(1)}</td>
-                          <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={o.note||""}>{o.note||"—"}</td>
-                          <td>
+                          <td style={{fontSize:12,color:T.muted,...cellTrunc}} title={o.note||""}>{o.note||"—"}</td>
+                          <td style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                             <button className="btn btn-sm btn-ghost" onClick={()=>reopenOpening(o.id)}>Reopen</button>
-                            <button className="btn btn-sm btn-danger" style={{marginLeft:6}} onClick={()=>deleteOpening(o)}>Delete</button>
+                            <button className="btn btn-sm btn-danger" onClick={()=>deleteOpening(o)}>Delete</button>
                           </td>
                         </tr>
                       );
