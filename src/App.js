@@ -2762,9 +2762,10 @@ function HireFlowSettings({ showToast }) {
 // ================================================
 // HIREFLOW — CANDIDATE DETAIL MODAL
 // ================================================
-function CandidateModal({ candidate, processes, positionTypes, leadSources, rejectionReasons, funnelStages, users, onClose, onChanged, showToast }) {
+function CandidateModal({ candidate, companies, processes, positionTypes, leadSources, rejectionReasons, funnelStages, users, onClose, onChanged, showToast }) {
   const [form,setForm]=useState({
     current_salary:candidate.current_salary||"", expected_salary:candidate.expected_salary||"",
+    company_id:candidate.company_id||"",
     location:candidate.location||"", process_id:candidate.process_id||"", position_type_id:candidate.position_type_id||"",
     source_id:candidate.source_id||"", intent:candidate.intent||"", languages_spoken:candidate.languages_spoken||"",
     english:candidate.language_ratings?.english||"", hindi:candidate.language_ratings?.hindi||"", malayalam:candidate.language_ratings?.malayalam||"",
@@ -2866,6 +2867,7 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
     try{
       await dbUpdate("candidates",`id=eq.${candidate.id}`,{
         current_salary:form.current_salary||null, expected_salary:form.expected_salary||null,
+        company_id:form.company_id||null,
         location:form.location||null, process_id:form.process_id||null, position_type_id:form.position_type_id||null,
         source_id:form.source_id||null, intent:form.intent||null, languages_spoken:form.languages_spoken||null,
         language_ratings:{english:form.english||null,hindi:form.hindi||null,malayalam:form.malayalam||null},
@@ -2907,6 +2909,11 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
         }else{
           showToast("Stage updated","success");
         }
+      }else if(newStageIsHired&&!selectedOpeningId&&!candidate.filled_opening_id){
+        // HR didn't manually pick an opening — auto-link to a matching OPEN
+        // one, or auto-create it, so hiring never depends on someone having
+        // remembered to open a requisition first.
+        await autoLinkOnHire();
       }else{
         showToast("Stage updated","success");
       }
@@ -2914,6 +2921,40 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
       onChanged();loadActivity();
     }catch{showToast("Failed to update stage","error");}
     finally{setBusy(false);}
+  }
+
+  async function autoLinkOnHire(){
+    if(!form.company_id){
+      showToast("Stage updated — no Company set, so this couldn't be auto-linked to a position. Set Company in Candidate Details, then link via Fills Which Opening.","warn");
+      return;
+    }
+    try{
+      const match=allOpenings.find(o=>o.status==="OPEN"&&o.company_id===form.company_id&&o.process_id===form.process_id&&o.position_type_id===form.position_type_id);
+      let opening=match;
+      if(!opening){
+        const dateStr=window.prompt("No open requisition found for this Company/Process/Position. When was this position actually opened? (YYYY-MM-DD)",new Date().toISOString().split("T")[0]);
+        if(!dateStr){showToast("Stage updated — position not auto-created (cancelled). Link manually via Fills Which Opening.","warn");return;}
+        const parsed=new Date(dateStr);
+        if(isNaN(parsed.getTime())){showToast("Stage updated — invalid date, position not auto-created. Link manually via Fills Which Opening.","warn");return;}
+        const created=await dbInsert("position_openings",{
+          company_id:form.company_id,process_id:form.process_id,position_type_id:form.position_type_id,
+          target_count:1,status:"OPEN",created_by:myUserId,created_at:parsed.toISOString(),
+        });
+        opening=created[0];
+      }
+      await dbUpdate("candidates",`id=eq.${candidate.id}`,{filled_opening_id:opening.id,filled_at:new Date().toISOString(),filled_by:myUserId});
+      await dbInsert("candidate_activity",{
+        candidate_id:candidate.id,type:"NOTE",is_contact_attempt:false,
+        remark:`Auto-${match?"linked to":"created and linked to"} opening: ${openingLabel(opening)}`,changed_by:myUserId,
+      });
+      const filledNow=await dbSelect("candidates",`?select=id&filled_opening_id=eq.${opening.id}`);
+      if(filledNow.length>=opening.target_count){
+        await dbUpdate("position_openings",`id=eq.${opening.id}`,{status:"CLOSED",closed_at:new Date().toISOString(),closed_by:myUserId});
+        showToast(`Stage updated — auto-${match?"linked":"created"} opening (${openingLabel(opening)}), target reached, auto-closed`,"success");
+      }else{
+        showToast(`Stage updated — auto-${match?"linked to":"created"} opening: ${openingLabel(opening)}`,"success");
+      }
+    }catch{showToast("Stage updated, but auto-linking to a position failed — link manually via Fills Which Opening","error");}
   }
 
   async function logAttempt(){
@@ -3186,11 +3227,18 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
               </div>
             </div>
             <div className="two-col" style={{marginBottom:8}}>
+              <div className="field"><label>Company</label>
+                <select value={form.company_id} onChange={e=>setForm({...form,company_id:e.target.value})}>
+                  <option value="">—</option>{(companies||[]).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
               <div className="field"><label>Process</label>
                 <select value={form.process_id} onChange={e=>setForm({...form,process_id:e.target.value})}>
                   <option value="">—</option>{processes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
+            </div>
+            <div className="two-col" style={{marginBottom:8}}>
               <div className="field"><label>Position</label>
                 <select value={form.position_type_id} onChange={e=>setForm({...form,position_type_id:e.target.value})}>
                   <option value="">—</option>{positionTypes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
@@ -3243,6 +3291,7 @@ function CandidateModal({ candidate, processes, positionTypes, leadSources, reje
 // ================================================
 function HireFlowCandidates({ showToast }) {
   const [candidates,setCandidates]=useState([]);
+  const [companies,setCompanies]=useState([]);
   const [processes,setProcesses]=useState([]);
   const [positionTypes,setPositionTypes]=useState([]);
   const [leadSources,setLeadSources]=useState([]);
@@ -3262,7 +3311,7 @@ function HireFlowCandidates({ showToast }) {
   const pageSize=25;
   const [selected,setSelected]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
-  const [addForm,setAddForm]=useState({name:"",phone:"",process_id:"",position_type_id:"",source_id:"",assigned_to:"",languages_spoken:""});
+  const [addForm,setAddForm]=useState({name:"",phone:"",company_id:"",process_id:"",position_type_id:"",source_id:"",assigned_to:"",languages_spoken:""});
   const [adding,setAdding]=useState(false);
   const [uploading,setUploading]=useState(false);
   const [uploadAssignees,setUploadAssignees]=useState([]);
@@ -3295,8 +3344,9 @@ function HireFlowCandidates({ showToast }) {
   async function loadAll(){
     setLoading(true);
     try{
-      const [cands,procs,posTypes,sources,reasons,stages,userList,activity]=await Promise.all([
+      const [cands,comps,procs,posTypes,sources,reasons,stages,userList,activity]=await Promise.all([
         dbSelect("candidates","?select=*&order=updated_at.desc"),
+        dbSelect("companies","?select=*&order=name"),
         dbSelect("processes","?select=*&order=name"),
         dbSelect("position_types","?select=*&order=name"),
         dbSelect("lead_sources","?select=*&order=name"),
@@ -3305,7 +3355,7 @@ function HireFlowCandidates({ showToast }) {
         dbSelect("user_roles","?select=id,name,email,role,manager_id"),
         dbSelect("candidate_activity","?select=candidate_id,is_contact_attempt,changed_at&order=changed_at.desc"),
       ]);
-      setCandidates(cands);setProcesses(procs);setPositionTypes(posTypes);setLeadSources(sources);setRejectionReasons(reasons);setFunnelStages(stages);setUsers(userList);
+      setCandidates(cands);setCompanies(comps);setProcesses(procs);setPositionTypes(posTypes);setLeadSources(sources);setRejectionReasons(reasons);setFunnelStages(stages);setUsers(userList);
 
       const summary={};
       activity.forEach(a=>{
@@ -3449,6 +3499,7 @@ function HireFlowCandidates({ showToast }) {
       const newStage=funnelStages.find(s=>s.name==="New");
       const inserted=await dbInsert("candidates",{
         name:addForm.name.trim(),phone,
+        company_id:addForm.company_id||null,
         process_id:addForm.process_id||null,position_type_id:addForm.position_type_id||null,
         source_id:addForm.source_id||null,assigned_to:addForm.assigned_to||null,
         assigned_at:addForm.assigned_to?new Date().toISOString():null,
@@ -3858,7 +3909,7 @@ function HireFlowCandidates({ showToast }) {
 
       {selected&&(
         <CandidateModal
-          candidate={selected} processes={processes} positionTypes={positionTypes}
+          candidate={selected} companies={companies} processes={processes} positionTypes={positionTypes}
           leadSources={leadSources} rejectionReasons={rejectionReasons} funnelStages={funnelStages} users={users}
           onClose={()=>setSelected(null)} onChanged={loadAll} showToast={showToast}
         />
@@ -3874,11 +3925,18 @@ function HireFlowCandidates({ showToast }) {
             <div className="field"><label>Phone *</label><input value={addForm.phone} onChange={e=>setAddForm({...addForm,phone:e.target.value})} placeholder="10 digits"/></div>
           </div>
           <div className="two-col" style={{marginBottom:12}}>
+            <div className="field"><label>Company</label>
+              <select value={addForm.company_id} onChange={e=>setAddForm({...addForm,company_id:e.target.value})}>
+                <option value="">—</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
             <div className="field"><label>Process</label>
               <select value={addForm.process_id} onChange={e=>setAddForm({...addForm,process_id:e.target.value})}>
                 <option value="">—</option>{processes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
+          </div>
+          <div className="two-col" style={{marginBottom:12}}>
             <div className="field"><label>Position</label>
               <select value={addForm.position_type_id} onChange={e=>setAddForm({...addForm,position_type_id:e.target.value})}>
                 <option value="">—</option>{positionTypes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
