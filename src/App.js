@@ -127,6 +127,8 @@ return `
   tr:last-child td{border-bottom:none;}
   tbody tr{transition:background 0.1s ${ease};}
   tbody tr:hover td{background:${t.mode==="light"?"#FAFAFF":"#181D2A"};}
+  .table-compact th{padding:7px 12px;}
+  .table-compact td{padding:7px 12px;}
   .badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;}
   .badge-green{background:${t.greenDim};color:${t.green};}
   .badge-red{background:${t.redDim};color:${t.red};}
@@ -1441,8 +1443,8 @@ function InterestedCandidates({ showToast }) {
   const [saving,setSaving]=useState(false);
   const [filterCampaign,setFilterCampaign]=useState(()=>loadFilter("cand_campaign","ALL"));
   const [filterStatus,setFilterStatus]=useState(()=>loadFilter("cand_status","PENDING"));
-  const [filterFrom,setFilterFrom]=useState(today());
-  const [filterTo,setFilterTo]=useState(today());
+  const [filterFrom,setFilterFrom]=useState("");
+  const [filterTo,setFilterTo]=useState("");
   const [campaigns,setCampaigns]=useState([]);
 
   useEffect(()=>{load();},[]);
@@ -1550,7 +1552,7 @@ function InterestedCandidates({ showToast }) {
             {!loading&&filtered.length===0?(
               <div className="empty-state"><div className="empty-icon">☆</div><div className="empty-title">No interested candidates yet</div><div className="empty-sub">Candidates who press 1 appear here</div></div>
             ):(
-              <table>
+              <table className="table-compact">
                 <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th>Status</th><th>Last Update</th><th>By</th><th></th></tr></thead>
                 <tbody>{loading?<SkeletonRows cols={7}/>:filtered.map((c,i)=>{const u=updates[c.phone]?.[0];return(
                   <tr key={i}>
@@ -2309,6 +2311,8 @@ function PositionOpenings({ showToast }) {
   const [linkChoice,setLinkChoice]=useState({});
   const [expandedOpening,setExpandedOpening]=useState(null);
   const [expandedProgress,setExpandedProgress]=useState(null);
+  const [openingsColWidths,setOpeningsColWidths]=useState({});
+  const [closedColWidths,setClosedColWidths]=useState({});
   const [editingDateId,setEditingDateId]=useState(null);
   const [editingDateValue,setEditingDateValue]=useState("");
   const [progressCandidates,setProgressCandidates]=useState([]);
@@ -2562,19 +2566,27 @@ function PositionOpenings({ showToast }) {
                     <option value="CLOSED">Closed</option>
                     <option value="ALL">All</option>
                   </select>
+                  {Object.keys(openingsColWidths).length>0&&<button className="btn btn-sm btn-ghost" onClick={()=>setOpeningsColWidths({})}>Reset Columns</button>}
                   <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
                 </div>
               </div>
               <div className="table-wrap">
                 {!loading&&filtered.length===0?<div className="empty-state"><div className="empty-icon">▣</div><div className="empty-title">No positions here</div></div>:(
                   <table style={{tableLayout:"fixed"}}>
-                    <colgroup>
-                      <col style={{width:"8%"}}/><col style={{width:"9%"}}/><col style={{width:"7%"}}/>
-                      <col style={{width:"5%"}}/><col style={{width:"5%"}}/><col style={{width:"7%"}}/>
-                      <col style={{width:"5%"}}/><col style={{width:"8%"}}/><col style={{width:"5%"}}/>
-                      <col style={{width:"5%"}}/><col style={{width:"6%"}}/><col style={{width:"30%"}}/>
-                    </colgroup>
-                    <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Status</th><th>Opened At</th><th>Closed At</th><th>Closed By</th><th>Note</th><th>Actions</th></tr></thead>
+                    <thead><tr>
+                      <ResizableTh col="company" widths={openingsColWidths} setWidths={setOpeningsColWidths} defaultWidth={100}>Company</ResizableTh>
+                      <ResizableTh col="process" widths={openingsColWidths} setWidths={setOpeningsColWidths} defaultWidth={130}>Process</ResizableTh>
+                      <ResizableTh col="position" widths={openingsColWidths} setWidths={setOpeningsColWidths} defaultWidth={120}>Position</ResizableTh>
+                      <ResizableTh col="target" widths={openingsColWidths} setWidths={setOpeningsColWidths} defaultWidth={70}>Target</ResizableTh>
+                      <ResizableTh col="filled" widths={openingsColWidths} setWidths={setOpeningsColWidths} defaultWidth={70}>Filled</ResizableTh>
+                      <ResizableTh col="filledBy" widths={openingsColWidths} setWidths={setOpeningsColWidths} defaultWidth={100}>Filled By</ResizableTh>
+                      <ResizableTh col="status" widths={openingsColWidths} setWidths={setOpeningsColWidths} defaultWidth={90}>Status</ResizableTh>
+                      <ResizableTh col="openedAt" widths={openingsColWidths} setWidths={setOpeningsColWidths} defaultWidth={130}>Opened At</ResizableTh>
+                      <ResizableTh col="closedAt" widths={openingsColWidths} setWidths={setOpeningsColWidths} defaultWidth={100}>Closed At</ResizableTh>
+                      <ResizableTh col="closedBy" widths={openingsColWidths} setWidths={setOpeningsColWidths} defaultWidth={100}>Closed By</ResizableTh>
+                      <ResizableTh col="note" widths={openingsColWidths} setWidths={setOpeningsColWidths} defaultWidth={160}>Note</ResizableTh>
+                      <ResizableTh col="actions" widths={openingsColWidths} setWidths={setOpeningsColWidths} defaultWidth={250}>Actions</ResizableTh>
+                    </tr></thead>
                     <tbody>{loading?<SkeletonRows cols={12}/>:filtered.map(o=>{
                       const filled=filledCountByOpening[o.id]||0;
                       const fills=(fillsByOpening[o.id]||[]).slice().sort((a,b)=>new Date(b.filled_at||0)-new Date(a.filled_at||0));
@@ -2746,17 +2758,27 @@ function PositionOpenings({ showToast }) {
             )}
 
             <div className="card">
-              <div className="card-header"><div className="card-title">Closed Positions ({closedOnes.length})</div></div>
+              <div className="card-header">
+                <div className="card-title">Closed Positions ({closedOnes.length})</div>
+                {Object.keys(closedColWidths).length>0&&<button className="btn btn-sm btn-ghost" onClick={()=>setClosedColWidths({})}>Reset Columns</button>}
+              </div>
               <div className="table-wrap">
                 {closedOnes.length===0?<div className="empty-state"><div className="empty-icon">▣</div><div className="empty-title">No closed positions here</div></div>:(
                   <table style={{tableLayout:"fixed"}}>
-                    <colgroup>
-                      <col style={{width:"8%"}}/><col style={{width:"8%"}}/><col style={{width:"8%"}}/>
-                      <col style={{width:"5%"}}/><col style={{width:"5%"}}/><col style={{width:"7%"}}/>
-                      <col style={{width:"9%"}}/><col style={{width:"7%"}}/><col style={{width:"7%"}}/>
-                      <col style={{width:"7%"}}/><col style={{width:"8%"}}/><col style={{width:"21%"}}/>
-                    </colgroup>
-                    <thead><tr><th>Company</th><th>Process</th><th>Position</th><th>Target</th><th>Filled</th><th>Filled By</th><th>Opened At</th><th>Closed At</th><th>Closed By</th><th>Days to Close</th><th>Note</th><th>Actions</th></tr></thead>
+                    <thead><tr>
+                      <ResizableTh col="company" widths={closedColWidths} setWidths={setClosedColWidths} defaultWidth={100}>Company</ResizableTh>
+                      <ResizableTh col="process" widths={closedColWidths} setWidths={setClosedColWidths} defaultWidth={130}>Process</ResizableTh>
+                      <ResizableTh col="position" widths={closedColWidths} setWidths={setClosedColWidths} defaultWidth={120}>Position</ResizableTh>
+                      <ResizableTh col="target" widths={closedColWidths} setWidths={setClosedColWidths} defaultWidth={70}>Target</ResizableTh>
+                      <ResizableTh col="filled" widths={closedColWidths} setWidths={setClosedColWidths} defaultWidth={70}>Filled</ResizableTh>
+                      <ResizableTh col="filledBy" widths={closedColWidths} setWidths={setClosedColWidths} defaultWidth={100}>Filled By</ResizableTh>
+                      <ResizableTh col="openedAt" widths={closedColWidths} setWidths={setClosedColWidths} defaultWidth={130}>Opened At</ResizableTh>
+                      <ResizableTh col="closedAt" widths={closedColWidths} setWidths={setClosedColWidths} defaultWidth={100}>Closed At</ResizableTh>
+                      <ResizableTh col="closedBy" widths={closedColWidths} setWidths={setClosedColWidths} defaultWidth={100}>Closed By</ResizableTh>
+                      <ResizableTh col="daysToClose" widths={closedColWidths} setWidths={setClosedColWidths} defaultWidth={100}>Days to Close</ResizableTh>
+                      <ResizableTh col="note" widths={closedColWidths} setWidths={setClosedColWidths} defaultWidth={160}>Note</ResizableTh>
+                      <ResizableTh col="actions" widths={closedColWidths} setWidths={setClosedColWidths} defaultWidth={190}>Actions</ResizableTh>
+                    </tr></thead>
                     <tbody>{closedOnes.slice().sort((a,b)=>new Date(b.closed_at)-new Date(a.closed_at)).map(o=>{
                       const filled=filledCountByOpening[o.id]||0;
                       const fills=fillsByOpening[o.id]||[];
@@ -2774,7 +2796,7 @@ function PositionOpenings({ showToast }) {
                           <td style={{fontSize:12,color:T.muted,...cellTrunc}}>{o.closed_by?recruiterMap[o.closed_by]||"—":"—"}</td>
                           <td>{daysToClose(o).toFixed(1)}</td>
                           <td style={{fontSize:12,color:T.muted,...cellTrunc}} title={o.note||""}>{o.note||"—"}</td>
-                          <td style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          <td style={{display:"flex",gap:6,flexWrap:"nowrap",padding:"13px 10px"}}>
                             <button className="btn btn-sm btn-ghost" onClick={()=>reopenOpening(o.id)}>Reopen</button>
                             <button className="btn btn-sm btn-danger" onClick={()=>deleteOpening(o)}>Delete</button>
                           </td>
@@ -3494,8 +3516,10 @@ function HireFlowCandidates({ showToast }) {
     return Math.floor((new Date(today()).getTime()-new Date(lastDate).getTime())/msPerDay);
   }
   const dashActiveScoped=dashScoped.filter(c=>!stageMap[c.current_stage_id]?.is_exit_stage);
-  const dashUntouchedToday=dashActiveScoped.filter(c=>daysUntouched(c)===1);
-  const dashUntouchedPast=dashActiveScoped.filter(c=>daysUntouched(c)>=2);
+  // "Untouched" = still sitting in New — nothing has happened to them since
+  // upload/creation. Anything that moved past New (even just to Contacted)
+  // has, by definition, been touched.
+  const dashUntouched=dashScoped.filter(c=>stageMap[c.current_stage_id]?.name==="New");
 
   async function addCandidate(){
     const phone=addForm.phone.replace(/\D/g,"");
@@ -3758,7 +3782,7 @@ function HireFlowCandidates({ showToast }) {
             <div className="card-header"><div className="card-title">Concluded Cases ({concludedList.length})</div><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div>
             <div className="table-wrap">
               {loading?<div className="empty-state">Loading...</div>:concludedList.length===0?<div className="empty-state"><div className="empty-icon">⬡</div><div className="empty-title">No concluded cases yet</div></div>:(
-                <table>
+                <table className="table-compact">
                   <thead><tr><th style={{width:22,padding:"8px 4px"}}></th><th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Outcome</th><th>Assigned To</th><th>Concluded Date</th><th>Linked Opening</th><th>Action</th></tr></thead>
                   <tbody>{concludedList.map(c=>{
                     const owner=userMap[c.assigned_to];
@@ -3813,10 +3837,9 @@ function HireFlowCandidates({ showToast }) {
           </div>
           <div className="kpi-card">
             <div className="kpi-label">Untouched Cases</div>
-            <div className={`kpi-value ${dashUntouchedPast.length?"red":""}`}>{dashUntouchedToday.length+dashUntouchedPast.length}</div>
-            <div className="kpi-sub" style={dashUntouchedPast.length?{color:T.red,fontWeight:600}:undefined}>
-              {!dashUntouchedToday.length&&!dashUntouchedPast.length?"None":
-                [dashUntouchedToday.length?`${dashUntouchedToday.length} since yesterday`:null,dashUntouchedPast.length?`${dashUntouchedPast.length} critical (2+ days)`:null].filter(Boolean).join(" · ")}
+            <div className={`kpi-value ${dashUntouched.length?"red":""}`}>{dashUntouched.length}</div>
+            <div className="kpi-sub" style={dashUntouched.length?{color:T.red,fontWeight:600}:undefined}>
+              {dashUntouched.length?"Still in New — not yet contacted":"None"}
             </div>
           </div>
         </div>
@@ -3857,7 +3880,7 @@ function HireFlowCandidates({ showToast }) {
           <div className="card-header"><div className="card-title">Candidates ({filtered.length})</div><div style={{display:"flex",gap:8}}>{Object.keys(colWidths).length>0&&<button className="btn btn-sm btn-ghost" onClick={()=>setColWidths({})}>Reset Columns</button>}<button className="btn btn-sm btn-ghost" onClick={exportCandidatesCSV}>Download CSV</button><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div></div>
           <div className="table-wrap">
             {!loading&&filtered.length===0?<div className="empty-state"><div className="empty-icon">⬡</div><div className="empty-title">No candidates found</div></div>:(
-              <table style={{tableLayout:"fixed"}}>
+              <table className="table-compact" style={{tableLayout:"fixed"}}>
                 <thead><tr>
                   <th style={{width:20,padding:"8px 4px"}}></th>
                   <th style={{width:22,padding:"8px 4px"}}>#</th>
