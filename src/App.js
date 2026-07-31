@@ -1446,8 +1446,31 @@ function InterestedCandidates({ showToast }) {
   const [filterFrom,setFilterFrom]=useState("");
   const [filterTo,setFilterTo]=useState("");
   const [campaigns,setCampaigns]=useState([]);
+  const [funnelStages,setFunnelStages]=useState([]);
+  const [processes,setProcesses]=useState([]);
+  const [positionTypes,setPositionTypes]=useState([]);
+  const [companies,setCompanies]=useState([]);
+  const [matchedCandidate,setMatchedCandidate]=useState(undefined); // undefined=checking, null=no match, object=match
+  const [convertProcessId,setConvertProcessId]=useState("");
+  const [convertPositionId,setConvertPositionId]=useState("");
+  const [convertCompanyId,setConvertCompanyId]=useState("");
 
-  useEffect(()=>{load();},[]);
+  useEffect(()=>{
+    load();
+    dbSelect("funnel_stages","?select=id,name").then(setFunnelStages).catch(()=>{});
+    dbSelect("processes","?select=id,name").then(setProcesses).catch(()=>{});
+    dbSelect("position_types","?select=id,name").then(setPositionTypes).catch(()=>{});
+    dbSelect("companies","?select=id,name").then(setCompanies).catch(()=>{});
+  },[]);
+
+  useEffect(()=>{
+    if(!selected){setMatchedCandidate(undefined);return;}
+    setMatchedCandidate(undefined);
+    setConvertProcessId("");setConvertPositionId("");setConvertCompanyId("");
+    dbSelect("candidates",`?select=id,name,current_stage_id&phone=eq.${selected.phone}&limit=1`)
+      .then(rows=>setMatchedCandidate(rows[0]||null))
+      .catch(()=>setMatchedCandidate(null));
+  },[selected]);
 
   async function load(){
     setLoading(true);
@@ -1472,11 +1495,20 @@ function InterestedCandidates({ showToast }) {
 
       const phones=[...new Set(dedupedLogs.map(l=>l.phone))];
       let leadsMap={};
+      let dialCountMap={};
       if(phones.length){
-        const leads=await dbSelect("leads",`?select=phone,name&phone=in.(${phones.slice(0,50).join(",")})`);
+        const phoneList=phones.slice(0,50).join(",");
+        const [leads,allLogsForPhones]=await Promise.all([
+          dbSelect("leads",`?select=phone,name&phone=in.(${phoneList})`),
+          // Every dial attempt regardless of outcome, so HR can see total
+          // times someone's actually been reached out to via IVR — not
+          // just the one call that happened to land INTERESTED.
+          dbSelect("call_logs",`?select=phone&phone=in.(${phoneList})`),
+        ]);
         leads.forEach(l=>leadsMap[l.phone]=l.name);
+        allLogsForPhones.forEach(l=>{dialCountMap[l.phone]=(dialCountMap[l.phone]||0)+1;});
       }
-      const enriched=dedupedLogs.map(l=>({...l,name:leadsMap[l.phone]||"Unknown"}));
+      const enriched=dedupedLogs.map(l=>({...l,name:leadsMap[l.phone]||"Unknown",ivrDialCount:dialCountMap[l.phone]||0}));
       setCandidates(enriched);
       setCampaigns([...new Set(logs.map(c=>c.campaign).filter(Boolean))]);
       const updMap={};
@@ -1488,11 +1520,40 @@ function InterestedCandidates({ showToast }) {
 
   async function saveUpdate(){
     if(!selected)return;
+    const targetStageName=updateForm.status==="HIRED"?"Hired":updateForm.status==="REJECTED"?"Rejected":null;
+    if(targetStageName&&matchedCandidate===null&&(!convertProcessId||!convertPositionId)){
+      showToast("Pick a Process and Position to create this candidate in HireFlow","error");return;
+    }
     setSaving(true);
     try{
       await dbInsert("candidate_updates",{phone:selected.phone,candidate_name:selected.name,campaign:selected.campaign,status:updateForm.status,comment:updateForm.comment,updated_by:getEmail()});
-      showToast("Update saved","success");setSelected(null);setUpdateForm({status:"PENDING",comment:""});load();
-    }catch(e){showToast("Failed","error");}
+
+      if(targetStageName){
+        const targetStage=funnelStages.find(s=>s.name===targetStageName);
+        if(matchedCandidate){
+          await dbUpdate("candidates",`id=eq.${matchedCandidate.id}`,{current_stage_id:targetStage.id,updated_at:new Date().toISOString()});
+          await dbInsert("candidate_activity",{
+            candidate_id:matchedCandidate.id,type:"STAGE_CHANGE",is_contact_attempt:false,
+            from_stage_id:matchedCandidate.current_stage_id,to_stage_id:targetStage.id,
+            remark:`Moved to ${targetStageName} from IVR Interested Candidates${updateForm.comment?` — ${updateForm.comment}`:""}`,
+          });
+        }else{
+          const created=await dbInsert("candidates",{
+            name:selected.name==="Unknown"?selected.phone:selected.name,phone:selected.phone,
+            process_id:convertProcessId,position_type_id:convertPositionId,company_id:convertCompanyId||null,
+            current_stage_id:targetStage.id,
+          });
+          await dbInsert("candidate_activity",{
+            candidate_id:created[0].id,type:"STAGE_CHANGE",is_contact_attempt:false,
+            to_stage_id:targetStage.id,
+            remark:`Created from IVR Interested Candidates, straight to ${targetStageName}${updateForm.comment?` — ${updateForm.comment}`:""}`,
+          });
+        }
+      }
+
+      showToast(targetStageName?`Update saved — ${matchedCandidate?"moved":"created"} in HireFlow (${targetStageName})`:"Update saved","success");
+      setSelected(null);setUpdateForm({status:"PENDING",comment:""});load();
+    }catch(e){showToast(e.message||"Failed","error");}
     finally{setSaving(false);}
   }
 
@@ -1553,12 +1614,13 @@ function InterestedCandidates({ showToast }) {
               <div className="empty-state"><div className="empty-icon">☆</div><div className="empty-title">No interested candidates yet</div><div className="empty-sub">Candidates who press 1 appear here</div></div>
             ):(
               <table className="table-compact">
-                <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th>Status</th><th>Last Update</th><th>By</th><th></th></tr></thead>
-                <tbody>{loading?<SkeletonRows cols={7}/>:filtered.map((c,i)=>{const u=updates[c.phone]?.[0];return(
+                <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th title="Total IVR dial attempts to this number, any outcome">IVR Attempts</th><th>Status</th><th>Last Update</th><th>By</th><th></th></tr></thead>
+                <tbody>{loading?<SkeletonRows cols={8}/>:filtered.map((c,i)=>{const u=updates[c.phone]?.[0];return(
                   <tr key={i}>
                     <td style={{fontWeight:500}}>{c.name}</td>
                     <td style={{fontFamily:"monospace"}}>{c.phone}</td>
                     <td>{(c.allCampaigns||[c.campaign]).map(camp=><span key={camp} className="tag" style={{marginRight:4,marginBottom:2,display:"inline-block"}}>{camp}</span>)}</td>
+                    <td>{c.ivrDialCount}x</td>
                     <td><DisposBadge sub={u?.status||"PENDING"}/></td>
                     <td style={{fontSize:12,color:T.muted,maxWidth:180}}>{u?.comment||"—"}</td>
                     <td style={{fontSize:11,color:T.muted}}>{u?.updated_by?.split("@")[0]||"—"}</td>
@@ -1576,7 +1638,7 @@ function InterestedCandidates({ showToast }) {
       </div>
       {selected&&(
         <Modal title={`Update: ${selected.name}`} sub={`${selected.phone} · ${selected.campaign}`} onClose={()=>setSelected(null)}
-          actions={<><button className="btn btn-sm btn-ghost" onClick={()=>setSelected(null)}>Cancel</button><button className="btn btn-sm btn-purple" onClick={saveUpdate} disabled={saving}>{saving?"Saving...":"Save Update"}</button></>}>
+          actions={<><button className="btn btn-sm btn-ghost" onClick={()=>setSelected(null)}>Cancel</button><button className="btn btn-sm btn-purple" onClick={saveUpdate} disabled={saving||((updateForm.status==="HIRED"||updateForm.status==="REJECTED")&&matchedCandidate===undefined)}>{saving?"Saving...":"Save Update"}</button></>}>
           {updates[selected.phone]?.length>0&&(
             <div style={{marginBottom:16}}>
               <div className="section-label">History</div>
@@ -1593,11 +1655,38 @@ function InterestedCandidates({ showToast }) {
           <div className="field"><label>Status</label>
             <select value={updateForm.status} onChange={e=>setUpdateForm({...updateForm,status:e.target.value})}>
               <option value="PENDING">Pending</option>
-              <option value="PICKED_UP">Picked Up for Interview</option>
               <option value="REJECTED">Rejected</option>
               <option value="HIRED">Hired</option>
             </select>
           </div>
+          {(updateForm.status==="HIRED"||updateForm.status==="REJECTED")&&(
+            matchedCandidate===undefined?(
+              <div className="info-box" style={{marginBottom:14}}>Checking HireFlow for this phone number...</div>
+            ):matchedCandidate?(
+              <div className="info-box" style={{marginBottom:14}}>Already a HireFlow candidate (<strong>{matchedCandidate.name}</strong>) — saving will move them to <strong>{updateForm.status==="HIRED"?"Hired":"Rejected"}</strong>.</div>
+            ):(
+              <div style={{marginBottom:14}}>
+                <div className="info-box amber" style={{marginBottom:10}}>No HireFlow candidate for this phone yet — pick a Process and Position to create one, straight into <strong>{updateForm.status==="HIRED"?"Hired":"Rejected"}</strong>.</div>
+                <div className="two-col">
+                  <div className="field" style={{marginBottom:0}}><label>Process *</label>
+                    <select value={convertProcessId} onChange={e=>setConvertProcessId(e.target.value)}>
+                      <option value="">—</option>{processes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="field" style={{marginBottom:0}}><label>Position Type *</label>
+                    <select value={convertPositionId} onChange={e=>setConvertPositionId(e.target.value)}>
+                      <option value="">—</option>{positionTypes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="field" style={{marginBottom:0}}><label>Company (optional)</label>
+                    <select value={convertCompanyId} onChange={e=>setConvertCompanyId(e.target.value)}>
+                      <option value="">—</option>{companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )
+          )}
           <div className="field"><label>Comment</label><textarea rows="3" style={{resize:"vertical"}} placeholder="Notes about this candidate..." value={updateForm.comment} onChange={e=>setUpdateForm({...updateForm,comment:e.target.value})}/></div>
           <div style={{fontSize:12,color:T.muted}}>Saving as: <strong>{getEmail()}</strong></div>
         </Modal>
@@ -3088,7 +3177,7 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
     finally{setSendingToIvr(false);}
   }
 
-  const contactCount=activity.filter(a=>a.is_contact_attempt).length;
+  const ivrAttemptCount=activity.filter(a=>a.remark==="IVR call placed").length;
   const currentStage=stageMap[candidate.current_stage_id];
 
   return(
@@ -3097,7 +3186,7 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
         <div className="card-body">
           <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",marginBottom:14}}>
             <span className="badge" style={{fontSize:14,padding:"6px 14px",background:currentStage?.is_exit_stage?`${T.purple}22`:`${T.accent}22`,color:currentStage?.is_exit_stage?T.purple:T.accent}}>{currentStage?.name||"No stage"}</span>
-            <span className="badge badge-gray">Contacted {contactCount}x</span>
+            <span className="badge badge-gray">IVR Attempts {ivrAttemptCount}x</span>
             {candidate.linked_lead_campaign&&<span className="badge badge-green">IVR called before</span>}
           </div>
           <div className="field" style={{marginBottom:14}}>
@@ -3389,14 +3478,19 @@ function HireFlowCandidates({ showToast }) {
         dbSelect("rejection_reasons","?select=*&order=name"),
         dbSelect("funnel_stages","?select=*&order=sort_order"),
         dbSelect("user_roles","?select=id,name,email,role,manager_id"),
-        dbSelect("candidate_activity","?select=candidate_id,is_contact_attempt,changed_at&order=changed_at.desc"),
+        dbSelect("candidate_activity","?select=candidate_id,is_contact_attempt,remark,changed_at&order=changed_at.desc"),
       ]);
       setCandidates(cands);setCompanies(comps);setProcesses(procs);setPositionTypes(posTypes);setLeadSources(sources);setRejectionReasons(reasons);setFunnelStages(stages);setUsers(userList);
 
       const summary={};
       activity.forEach(a=>{
-        if(!summary[a.candidate_id])summary[a.candidate_id]={count:0,last:a.changed_at};
+        if(!summary[a.candidate_id])summary[a.candidate_id]={count:0,ivrCount:0,last:a.changed_at};
         if(a.is_contact_attempt)summary[a.candidate_id].count+=1;
+        // "IVR call placed" is the exact remark hireflow.py's _place_call()
+        // writes for every on-the-spot IVR dial — the one reliable way to
+        // tell an IVR attempt apart from a recruiter's manually-logged one
+        // (which shares the same CALL_ATTEMPT type but a free-text remark).
+        if(a.remark==="IVR call placed")summary[a.candidate_id].ivrCount+=1;
       });
       setActivitySummary(summary);
 
@@ -3420,14 +3514,14 @@ function HireFlowCandidates({ showToast }) {
   const assignableUsers=users.filter(u=>["HR","MANAGER"].includes(u.role));
 
   function exportCandidatesCSV(){
-    const headers=["Name","Phone","Process","Position","Stage","Assigned To","Remarks","Contacted","Last Activity","Current Salary","Expected Salary","Location","Source","Languages Spoken","Created At"];
+    const headers=["Name","Phone","Process","Position","Stage","Assigned To","Remarks","IVR Attempts","Last Activity","Current Salary","Expected Salary","Location","Source","Languages Spoken","Created At"];
     const rows=filtered.map(c=>{
       const owner=userMap[c.assigned_to];
       const summary=activitySummary[c.id];
       return [
         c.name,c.phone,processMap[c.process_id]||"",positionMap[c.position_type_id]||"",
         stageMap[c.current_stage_id]?.name||"",owner?(owner.name||owner.email):"Unassigned",
-        c.remark||"",summary?.count||0,
+        c.remark||"",summary?.ivrCount||0,
         summary?.last?new Date(summary.last).toLocaleDateString("en-IN"):"Never",
         c.current_salary||"",c.expected_salary||"",c.location||"",sourceMap[c.source_id]||"",
         c.languages_spoken||"",c.created_at?new Date(c.created_at).toLocaleDateString("en-IN"):"",
@@ -3783,10 +3877,11 @@ function HireFlowCandidates({ showToast }) {
             <div className="table-wrap">
               {loading?<div className="empty-state">Loading...</div>:concludedList.length===0?<div className="empty-state"><div className="empty-icon">⬡</div><div className="empty-title">No concluded cases yet</div></div>:(
                 <table className="table-compact">
-                  <thead><tr><th style={{width:22,padding:"8px 4px"}}></th><th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Outcome</th><th>Assigned To</th><th>Concluded Date</th><th>Linked Opening</th><th>Action</th></tr></thead>
+                  <thead><tr><th style={{width:22,padding:"8px 4px"}}></th><th>Name</th><th>Phone</th><th>Process</th><th>Position</th><th>Outcome</th><th>Assigned To</th><th>Concluded Date</th><th>Linked Opening</th><th title="Number of on-the-spot IVR calls placed for this candidate">IVR Attempts</th><th>Action</th></tr></thead>
                   <tbody>{concludedList.map(c=>{
                     const owner=userMap[c.assigned_to];
                     const stage=stageMap[c.current_stage_id];
+                    const ivrCount=activitySummary[c.id]?.ivrCount||0;
                     return(
                       <tr key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer"}}>
                         <td style={{padding:"6px 4px"}} onClick={e=>e.stopPropagation()}>
@@ -3800,6 +3895,7 @@ function HireFlowCandidates({ showToast }) {
                         <td>{owner?(owner.name||owner.email):"Unassigned"}</td>
                         <td>{hiredDateMap[c.id]?new Date(hiredDateMap[c.id]).toLocaleDateString("en-IN"):"—"}</td>
                         <td>{c.filled_opening_id?"✓ Linked":"—"}</td>
+                        <td>{ivrCount}x</td>
                         <td onClick={e=>e.stopPropagation()}>
                           {c.ivr_next_attempt_at?
                             <span className="badge badge-gray" title={`Scheduled for ${new Date(c.ivr_next_attempt_at).toLocaleString("en-IN")}`}>Scheduled</span>:
@@ -3892,7 +3988,7 @@ function HireFlowCandidates({ showToast }) {
                   <ResizableTh col="stage" widths={colWidths} setWidths={setColWidths} defaultWidth={110}>Stage</ResizableTh>
                   <ResizableTh col="assigned" widths={colWidths} setWidths={setColWidths} defaultWidth={100}>Assigned To</ResizableTh>
                   <ResizableTh col="remarks" widths={colWidths} setWidths={setColWidths} defaultWidth={180}>Remarks</ResizableTh>
-                  <th style={{width:70}}>Contacted</th>
+                  <th style={{width:85}} title="Number of on-the-spot IVR calls placed for this candidate">IVR Attempts</th>
                   <ResizableTh col="lastActivity" widths={colWidths} setWidths={setColWidths} defaultWidth={110}>Last Activity</ResizableTh>
                   <th style={{width:110}}>IVR</th>
                 </tr></thead>
@@ -3930,7 +4026,7 @@ function HireFlowCandidates({ showToast }) {
                       <td style={{fontSize:12,color:T.muted,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={c.remark||""}>
                         {c.remark||"—"}
                       </td>
-                      <td>{summary?.count||0}x</td>
+                      <td>{summary?.ivrCount||0}x</td>
                       <td style={{fontSize:12,color:stale?T.amber:T.muted}}>
                         {summary?.last?new Date(summary.last).toLocaleDateString("en-IN"):"Never"}{stale&&" — STALE"}
                       </td>
