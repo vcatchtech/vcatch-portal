@@ -3864,6 +3864,9 @@ function HireFlowCandidates({ showToast }) {
             {(concludedStageFilter||hiredProcessFilter||hiredPositionFilter||hiredFrom||hiredTo)&&(
               <button className="btn btn-sm btn-ghost" onClick={()=>{setConcludedStageFilter("");setHiredProcessFilter("");setHiredPositionFilter("");setHiredFrom("");setHiredTo("");}}>✕ Clear Filters</button>
             )}
+            {concludedList.length>0&&(
+              <button className="btn btn-sm btn-ghost" onClick={()=>setSelectedIds(concludedList.map(c=>c.id))}>Select All Filtered ({concludedList.length})</button>
+            )}
           </div>
           {selectedIds.length>0&&(
             <div className="card" style={{display:"flex",gap:8,alignItems:"center",padding:12,marginBottom:16,border:`1.5px solid ${T.accent}`,flexWrap:"wrap"}}>
