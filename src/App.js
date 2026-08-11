@@ -1457,13 +1457,14 @@ function InterestedCandidates({ showToast }) {
   const [positionTypes,setPositionTypes]=useState([]);
   const [companies,setCompanies]=useState([]);
   const [matchedCandidate,setMatchedCandidate]=useState(undefined); // undefined=checking, null=no match, object=match
+  const [moveToStageId,setMoveToStageId]=useState(""); // "" = don't move into HireFlow
   const [convertProcessId,setConvertProcessId]=useState("");
   const [convertPositionId,setConvertPositionId]=useState("");
   const [convertCompanyId,setConvertCompanyId]=useState("");
 
   useEffect(()=>{
     load();
-    dbSelect("funnel_stages","?select=id,name").then(setFunnelStages).catch(()=>{});
+    dbSelect("funnel_stages","?select=id,name&order=sort_order").then(setFunnelStages).catch(()=>{});
     dbSelect("processes","?select=id,name").then(setProcesses).catch(()=>{});
     dbSelect("position_types","?select=id,name").then(setPositionTypes).catch(()=>{});
     dbSelect("companies","?select=id,name").then(setCompanies).catch(()=>{});
@@ -1472,6 +1473,7 @@ function InterestedCandidates({ showToast }) {
   useEffect(()=>{
     if(!selected){setMatchedCandidate(undefined);return;}
     setMatchedCandidate(undefined);
+    setMoveToStageId("");
     setConvertProcessId("");setConvertPositionId("");setConvertCompanyId("");
     dbSelect("candidates",`?select=id,name,current_stage_id&phone=eq.${selected.phone}&limit=1`)
       .then(rows=>setMatchedCandidate(rows[0]||null))
@@ -1501,20 +1503,28 @@ function InterestedCandidates({ showToast }) {
 
       const phones=[...new Set(dedupedLogs.map(l=>l.phone))];
       let leadsMap={};
+      let candidateNameMap={};
       let dialCountMap={};
       if(phones.length){
         const phoneList=phones.slice(0,50).join(",");
-        const [leads,allLogsForPhones]=await Promise.all([
+        const [leads,hfCandidates,allLogsForPhones]=await Promise.all([
           dbSelect("leads",`?select=phone,name&phone=in.(${phoneList})`),
+          // HireFlow's own "Send to IVR" calls are deliberately not written
+          // to `leads` (see hireflow.py) — that's the one and only source
+          // this page used to check, so any HireFlow-originated call always
+          // showed "Unknown" even though the real name exists right in the
+          // candidates table under the same phone number.
+          dbSelect("candidates",`?select=phone,name&phone=in.(${phoneList})`),
           // Every dial attempt regardless of outcome, so HR can see total
           // times someone's actually been reached out to via IVR — not
           // just the one call that happened to land INTERESTED.
           dbSelect("call_logs",`?select=phone&phone=in.(${phoneList})`),
         ]);
         leads.forEach(l=>leadsMap[l.phone]=l.name);
+        hfCandidates.forEach(c=>candidateNameMap[c.phone]=c.name);
         allLogsForPhones.forEach(l=>{dialCountMap[l.phone]=(dialCountMap[l.phone]||0)+1;});
       }
-      const enriched=dedupedLogs.map(l=>({...l,name:leadsMap[l.phone]||"Unknown",ivrDialCount:dialCountMap[l.phone]||0}));
+      const enriched=dedupedLogs.map(l=>({...l,name:candidateNameMap[l.phone]||leadsMap[l.phone]||"Unknown",ivrDialCount:dialCountMap[l.phone]||0}));
       setCandidates(enriched);
       setCampaigns([...new Set(logs.map(c=>c.campaign).filter(Boolean))]);
       const updMap={};
@@ -1526,22 +1536,21 @@ function InterestedCandidates({ showToast }) {
 
   async function saveUpdate(){
     if(!selected)return;
-    const targetStageName=updateForm.status==="HIRED"?"Hired":updateForm.status==="REJECTED"?"Rejected":null;
-    if(targetStageName&&matchedCandidate===null&&(!convertProcessId||!convertPositionId)){
+    const targetStage=moveToStageId?funnelStages.find(s=>s.id===moveToStageId):null;
+    if(targetStage&&matchedCandidate===null&&(!convertProcessId||!convertPositionId)){
       showToast("Pick a Process and Position to create this candidate in HireFlow","error");return;
     }
     setSaving(true);
     try{
       await dbInsert("candidate_updates",{phone:selected.phone,candidate_name:selected.name,campaign:selected.campaign,status:updateForm.status,comment:updateForm.comment,updated_by:getEmail()});
 
-      if(targetStageName){
-        const targetStage=funnelStages.find(s=>s.name===targetStageName);
+      if(targetStage){
         if(matchedCandidate){
           await dbUpdate("candidates",`id=eq.${matchedCandidate.id}`,{current_stage_id:targetStage.id,updated_at:new Date().toISOString()});
           await dbInsert("candidate_activity",{
             candidate_id:matchedCandidate.id,type:"STAGE_CHANGE",is_contact_attempt:false,
             from_stage_id:matchedCandidate.current_stage_id,to_stage_id:targetStage.id,
-            remark:`Moved to ${targetStageName} from IVR Interested Candidates${updateForm.comment?` — ${updateForm.comment}`:""}`,
+            remark:`Moved to ${targetStage.name} from IVR Interested Candidates${updateForm.comment?` — ${updateForm.comment}`:""}`,
           });
         }else{
           const created=await dbInsert("candidates",{
@@ -1552,12 +1561,12 @@ function InterestedCandidates({ showToast }) {
           await dbInsert("candidate_activity",{
             candidate_id:created[0].id,type:"STAGE_CHANGE",is_contact_attempt:false,
             to_stage_id:targetStage.id,
-            remark:`Created from IVR Interested Candidates, straight to ${targetStageName}${updateForm.comment?` — ${updateForm.comment}`:""}`,
+            remark:`Created from IVR Interested Candidates, straight to ${targetStage.name}${updateForm.comment?` — ${updateForm.comment}`:""}`,
           });
         }
       }
 
-      showToast(targetStageName?`Update saved — ${matchedCandidate?"moved":"created"} in HireFlow (${targetStageName})`:"Update saved","success");
+      showToast(targetStage?`Update saved — ${matchedCandidate?"moved":"created"} in HireFlow (${targetStage.name})`:"Update saved","success");
       setSelected(null);setUpdateForm({status:"PENDING",comment:""});load();
     }catch(e){showToast(e.message||"Failed","error");}
     finally{setSaving(false);}
@@ -1644,7 +1653,7 @@ function InterestedCandidates({ showToast }) {
       </div>
       {selected&&(
         <Modal title={`Update: ${selected.name}`} sub={`${selected.phone} · ${selected.campaign}`} onClose={()=>setSelected(null)}
-          actions={<><button className="btn btn-sm btn-ghost" onClick={()=>setSelected(null)}>Cancel</button><button className="btn btn-sm btn-purple" onClick={saveUpdate} disabled={saving||((updateForm.status==="HIRED"||updateForm.status==="REJECTED")&&matchedCandidate===undefined)}>{saving?"Saving...":"Save Update"}</button></>}>
+          actions={<><button className="btn btn-sm btn-ghost" onClick={()=>setSelected(null)}>Cancel</button><button className="btn btn-sm btn-purple" onClick={saveUpdate} disabled={saving||(!!moveToStageId&&matchedCandidate===undefined)}>{saving?"Saving...":"Save Update"}</button></>}>
           {updates[selected.phone]?.length>0&&(
             <div style={{marginBottom:16}}>
               <div className="section-label">History</div>
@@ -1658,21 +1667,27 @@ function InterestedCandidates({ showToast }) {
             </div>
           )}
           <div className="section-label">New Update</div>
-          <div className="field"><label>Status</label>
+          <div className="field"><label>Status (local note on this page only)</label>
             <select value={updateForm.status} onChange={e=>setUpdateForm({...updateForm,status:e.target.value})}>
               <option value="PENDING">Pending</option>
               <option value="REJECTED">Rejected</option>
               <option value="HIRED">Hired</option>
             </select>
           </div>
-          {(updateForm.status==="HIRED"||updateForm.status==="REJECTED")&&(
+          <div className="field"><label>Move to HireFlow Stage (optional)</label>
+            <select value={moveToStageId} onChange={e=>setMoveToStageId(e.target.value)}>
+              <option value="">— Don't move —</option>
+              {funnelStages.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          {!!moveToStageId&&(
             matchedCandidate===undefined?(
               <div className="info-box" style={{marginBottom:14}}>Checking HireFlow for this phone number...</div>
             ):matchedCandidate?(
-              <div className="info-box" style={{marginBottom:14}}>Already a HireFlow candidate (<strong>{matchedCandidate.name}</strong>) — saving will move them to <strong>{updateForm.status==="HIRED"?"Hired":"Rejected"}</strong>.</div>
+              <div className="info-box" style={{marginBottom:14}}>Already a HireFlow candidate (<strong>{matchedCandidate.name}</strong>) — saving will move them to <strong>{funnelStages.find(s=>s.id===moveToStageId)?.name}</strong>.</div>
             ):(
               <div style={{marginBottom:14}}>
-                <div className="info-box amber" style={{marginBottom:10}}>No HireFlow candidate for this phone yet — pick a Process and Position to create one, straight into <strong>{updateForm.status==="HIRED"?"Hired":"Rejected"}</strong>.</div>
+                <div className="info-box amber" style={{marginBottom:10}}>No HireFlow candidate for this phone yet — pick a Process and Position to create one, straight into <strong>{funnelStages.find(s=>s.id===moveToStageId)?.name}</strong>.</div>
                 <div className="two-col">
                   <div className="field" style={{marginBottom:0}}><label>Process *</label>
                     <select value={convertProcessId} onChange={e=>setConvertProcessId(e.target.value)}>
