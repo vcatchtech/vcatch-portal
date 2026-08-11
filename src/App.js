@@ -1189,6 +1189,7 @@ function Leads({ showToast }) {
   const [selectedCampaignData,setSelectedCampaignData]=useState(null);
   const [filterCampaign,setFilterCampaign]=useState("ALL");
   const [filterStatus,setFilterStatus]=useState("ALL");
+  const [search,setSearch]=useState("");
   const fileRef=useRef();
   const selectedFile=useRef(null);
 
@@ -1306,9 +1307,10 @@ function Leads({ showToast }) {
   }
 
   const filtered=leads.filter(l=>{
+    const qMatch=!search||(l.name||"").toLowerCase().includes(search.toLowerCase())||(l.phone||"").includes(search);
     const cMatch=filterCampaign==="ALL"||l.campaign===filterCampaign;
     const sMatch=filterStatus==="ALL"||l.status===filterStatus;
-    return cMatch&&sMatch;
+    return qMatch&&cMatch&&sMatch;
   });
 
   return(
@@ -1399,6 +1401,7 @@ function Leads({ showToast }) {
           <div className="card-header">
             <div className="card-title">All Leads ({filtered.length})</div>
             <div className="filter-row">
+              <input className="filter-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or phone" style={{maxWidth:200}}/>
               <FilterSelect value={filterCampaign==="ALL"?"":filterCampaign} onChange={v=>{const nv=v||"ALL";setFilterCampaign(nv);loadLeads(nv);}} allLabel="All Campaigns" options={campaigns.map(c=>({value:c.name,label:c.name}))}/>
               <FilterSelect value={filterStatus==="ALL"?"":filterStatus} onChange={v=>setFilterStatus(v||"ALL")} allLabel="All Status" options={[
                 {value:"PENDING",label:"Pending"},
@@ -1447,6 +1450,7 @@ function InterestedCandidates({ showToast }) {
   const [selected,setSelected]=useState(null);
   const [updateForm,setUpdateForm]=useState({status:"PENDING",comment:""});
   const [saving,setSaving]=useState(false);
+  const [search,setSearch]=useState("");
   const [filterCampaign,setFilterCampaign]=useState(()=>loadFilter("cand_campaign","ALL"));
   const [filterStatus,setFilterStatus]=useState(()=>loadFilter("cand_status","PENDING"));
   const [filterFrom,setFilterFrom]=useState("");
@@ -1592,13 +1596,14 @@ function InterestedCandidates({ showToast }) {
   }
 
   const filtered=candidates.filter(c=>{
+    const qMatch=!search||c.name.toLowerCase().includes(search.toLowerCase())||c.phone.includes(search);
     const cMatch=filterCampaign==="ALL"||(c.allCampaigns||[c.campaign]).includes(filterCampaign);
     const s=updates[c.phone]?.[0]?.status||"PENDING";
     const sMatch=filterStatus==="ALL"||s===filterStatus;
     const date=new Date(c.logged_at);
     const fMatch=!filterFrom||date>=new Date(filterFrom);
     const tMatch=!filterTo||date<=new Date(filterTo+"T23:59:59");
-    return cMatch&&sMatch&&fMatch&&tMatch;
+    return qMatch&&cMatch&&sMatch&&fMatch&&tMatch;
   });
 
   const total=candidates.length;
@@ -1618,6 +1623,7 @@ function InterestedCandidates({ showToast }) {
           ))}
         </div>
         <div className="filter-row" style={{marginBottom:16}}>
+          <input className="filter-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or phone" style={{maxWidth:220}}/>
           <FilterSelect value={filterCampaign==="ALL"?"":filterCampaign} onChange={v=>{const nv=v||"ALL";setFilterCampaign(nv);saveFilter("cand_campaign",nv);}} allLabel="All Campaigns" options={campaigns.map(c=>({value:c,label:c}))}/>
           <FilterSelect value={filterStatus==="ALL"?"":filterStatus} onChange={v=>{const nv=v||"ALL";setFilterStatus(nv);saveFilter("cand_status",nv);}} allLabel="All Status" options={[
             {value:"PENDING",label:"Pending"},
@@ -1731,6 +1737,7 @@ function InterestedCandidates({ showToast }) {
 function DndList({ showToast }) {
   const [dnd,setDnd]=useState([]);const [phone,setPhone]=useState("");const [adding,setAdding]=useState(false);
   const [nameMap,setNameMap]=useState({});
+  const [search,setSearch]=useState("");
   useEffect(()=>{load();},[]);
   async function load(){
     try{
@@ -1755,6 +1762,7 @@ function DndList({ showToast }) {
     finally{setAdding(false);}
   }
   async function remove(p){try{await dbDelete("dnd_list",`phone=eq.${p}`);showToast("Removed","success");load();}catch{showToast("Failed","error");}}
+  const filteredDnd=dnd.filter(d=>!search||(nameMap[d.phone]||"").toLowerCase().includes(search.toLowerCase())||d.phone.includes(search));
   return(
     <div>
       <div className="page-header"><div><div className="page-title">DND List</div><div className="page-sub">Blocked numbers — Not Interested responses auto-added</div></div></div>
@@ -1769,12 +1777,18 @@ function DndList({ showToast }) {
           </div>
         </div>
         <div className="card">
-          <div className="card-header"><div className="card-title">Blocked Numbers ({dnd.length})</div><button className="btn btn-sm btn-ghost" onClick={load}>↻</button></div>
+          <div className="card-header">
+            <div className="card-title">Blocked Numbers ({filteredDnd.length})</div>
+            <div style={{display:"flex",gap:8}}>
+              <input className="filter-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or phone" style={{maxWidth:200}}/>
+              <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
+            </div>
+          </div>
           <div className="table-wrap">
-            {dnd.length===0?<div className="empty-state"><div className="empty-icon">⊘</div><div className="empty-title">No numbers blocked</div></div>:(
+            {filteredDnd.length===0?<div className="empty-state"><div className="empty-icon">⊘</div><div className="empty-title">No numbers blocked</div></div>:(
               <table>
                 <thead><tr><th>Name</th><th>Phone</th><th>Reason</th><th>Added</th><th></th></tr></thead>
-                <tbody>{dnd.map(d=>(
+                <tbody>{filteredDnd.map(d=>(
                   <tr key={d.id}>
                     <td style={{fontWeight:500}}>{nameMap[d.phone]||"—"}</td>
                     <td style={{fontFamily:"monospace"}}>{d.phone}</td>
@@ -1896,6 +1910,7 @@ function AudioManager({ showToast }) {
 // ================================================
 function CallLogs({ showToast }) {
   const [logs,setLogs]=useState([]);const [loading,setLoading]=useState(false);
+  const [search,setSearch]=useState("");
   const [fd,setFd]=useState("");
   const [td,setTd]=useState("");
   const [fc,setFc]=useState(()=>loadFilter("logs_campaign","ALL"));
@@ -1923,12 +1938,13 @@ function CallLogs({ showToast }) {
   }
 
   const filtered=logs.filter(l=>{
+    const qM=!search||l.phone.includes(search);
     const cM=fc==="ALL"||l.campaign===fc;
     const dM=fds==="ALL"||l.sub_disposition===fds;
     const date=new Date(l.logged_at);
     const sM=!fd||date>=new Date(fd);
     const eM=!td||date<=new Date(td+"T23:59:59");
-    return cM&&dM&&sM&&eM;
+    return qM&&cM&&dM&&sM&&eM;
   });
   const display=limit==="ALL"?filtered:filtered.slice(0,parseInt(limit));
 
@@ -1965,6 +1981,7 @@ function CallLogs({ showToast }) {
           </div>
         )}
         <div className="filter-row" style={{marginBottom:16}}>
+          <input className="filter-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search phone" style={{maxWidth:180}}/>
           <FilterSelect value={fc==="ALL"?"":fc} onChange={v=>setFc(v||"ALL")} allLabel="All Campaigns" options={campaigns.map(c=>({value:c,label:c}))}/>
           <FilterSelect value={fds==="ALL"?"":fds} onChange={v=>setFds(v||"ALL")} allLabel="All Dispositions" options={dispositions.map(d=>({value:d,label:d.replace(/_/g," ")}))}/>
           <input type="date" className="filter-input" value={fd} onChange={e=>setFd(e.target.value)} title="From date"/>
@@ -2007,6 +2024,7 @@ function UserManagement({ showToast }) {
   const [users,setUsers]=useState([]);const [loading,setLoading]=useState(false);
   const [form,setForm]=useState({email:"",name:"",role:"HR",password:"",manager_id:""});
   const [adding,setAdding]=useState(false);const [resetting,setResetting]=useState(null);
+  const [search,setSearch]=useState("");
 
   useEffect(()=>{load();},[]);
   async function load(){setLoading(true);try{setUsers(await dbSelect("user_roles","?select=*&order=created_at.desc"));}catch{showToast("Failed","error");}finally{setLoading(false);}}
@@ -2091,12 +2109,18 @@ function UserManagement({ showToast }) {
         </div>
 
         <div className="card">
-          <div className="card-header"><div className="card-title">All Users ({users.length})</div><button className="btn btn-sm btn-ghost" onClick={load}>↻</button></div>
+          <div className="card-header">
+            <div className="card-title">All Users ({users.filter(u=>!search||(u.name||"").toLowerCase().includes(search.toLowerCase())||u.email.toLowerCase().includes(search.toLowerCase())).length})</div>
+            <div style={{display:"flex",gap:8}}>
+              <input className="filter-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or email" style={{maxWidth:200}}/>
+              <button className="btn btn-sm btn-ghost" onClick={load}>↻</button>
+            </div>
+          </div>
           <div className="table-wrap">
             {!loading&&users.length===0?<div className="empty-state"><div className="empty-icon">◉</div><div className="empty-title">No users</div></div>:(
               <table>
                 <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Change Role</th><th>Reports To</th><th>Actions</th></tr></thead>
-                <tbody>{loading?<SkeletonRows cols={7}/>:users.map(u=>(
+                <tbody>{loading?<SkeletonRows cols={7}/>:users.filter(u=>!search||(u.name||"").toLowerCase().includes(search.toLowerCase())||u.email.toLowerCase().includes(search.toLowerCase())).map(u=>(
                   <tr key={u.id}>
                     <td style={{fontWeight:500}}>{u.name||"—"}</td>
                     <td style={{fontFamily:"monospace",fontSize:12}}>{u.email}</td>
@@ -2439,6 +2463,7 @@ function PositionOpenings({ showToast }) {
   const [progressFunnelStages,setProgressFunnelStages]=useState([]);
   const [loading,setLoading]=useState(false);
   const [statusFilter,setStatusFilter]=useState("OPEN");
+  const [openingsSearch,setOpeningsSearch]=useState("");
   const [companyFilter,setCompanyFilter]=useState("");
   const [processFilter,setProcessFilter]=useState("");
   const [positionFilter,setPositionFilter]=useState("");
@@ -2610,6 +2635,11 @@ function PositionOpenings({ showToast }) {
   // avg-days breakdowns, and the Positions table itself — not just the table.
   const hrOptions=[...new Set(Object.values(fillsByOpening).flat().map(c=>c.filled_by).filter(Boolean))];
   const filteredOpenings=openings.filter(o=>{
+    if(openingsSearch){
+      const q=openingsSearch.toLowerCase();
+      const hay=`${companyMap[o.company_id]||""} ${processMap[o.process_id]||""} ${positionMap[o.position_type_id]||""} ${o.note||""}`.toLowerCase();
+      if(!hay.includes(q))return false;
+    }
     if(companyFilter&&o.company_id!==companyFilter)return false;
     if(processFilter&&o.process_id!==processFilter)return false;
     if(positionFilter&&o.position_type_id!==positionFilter)return false;
@@ -2663,6 +2693,7 @@ function PositionOpenings({ showToast }) {
             </div>
 
             <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+              <input className="filter-input" value={openingsSearch} onChange={e=>setOpeningsSearch(e.target.value)} placeholder="Search company, process, position, note" style={{maxWidth:240}}/>
               <FilterSelect value={companyFilter} onChange={setCompanyFilter} allLabel="All Companies" options={companies.map(c=>({value:c.id,label:c.name}))}/>
               <FilterSelect value={processFilter} onChange={setProcessFilter} allLabel="All Processes" options={processes.map(p=>({value:p.id,label:p.name}))}/>
               <FilterSelect value={positionFilter} onChange={setPositionFilter} allLabel="All Positions" options={positionTypes.map(p=>({value:p.id,label:p.name}))}/>
@@ -2671,8 +2702,8 @@ function PositionOpenings({ showToast }) {
               <input type="date" className="filter-input" value={dateTo} onChange={e=>setDateTo(e.target.value)} title="Opened to date"/>
               <button className="btn btn-sm btn-ghost" onClick={()=>{const t=today();setDateFrom(t);setDateTo(t);}}>Today</button>
               <button className="btn btn-sm btn-ghost" onClick={()=>{const t=new Date();const f=new Date();f.setDate(t.getDate()-7);setDateFrom(f.toISOString().split("T")[0]);setDateTo(t.toISOString().split("T")[0]);}}>This Week</button>
-              {(companyFilter||processFilter||positionFilter||hrFilter||dateFrom||dateTo)&&(
-                <button className="btn btn-sm btn-ghost" onClick={()=>{setCompanyFilter("");setProcessFilter("");setPositionFilter("");setHrFilter("");setDateFrom("");setDateTo("");}}>✕ Clear Filters</button>
+              {(openingsSearch||companyFilter||processFilter||positionFilter||hrFilter||dateFrom||dateTo)&&(
+                <button className="btn btn-sm btn-ghost" onClick={()=>{setOpeningsSearch("");setCompanyFilter("");setProcessFilter("");setPositionFilter("");setHrFilter("");setDateFrom("");setDateTo("");}}>✕ Clear Filters</button>
               )}
             </div>
 
@@ -3482,6 +3513,7 @@ function HireFlowCandidates({ showToast }) {
 
   const [pageTab,setPageTab]=useState("pipeline");
   const [hiredDateMap,setHiredDateMap]=useState({});
+  const [concludedSearch,setConcludedSearch]=useState("");
   const [concludedStageFilter,setConcludedStageFilter]=useState("");
   const [hiredProcessFilter,setHiredProcessFilter]=useState("");
   const [hiredPositionFilter,setHiredPositionFilter]=useState("");
@@ -3599,6 +3631,7 @@ function HireFlowCandidates({ showToast }) {
     if(!exitStageIdsForTab.includes(c.current_stage_id))return false;
     if(role==="HR"){if(c.assigned_to!==myUserId)return false;}
     else if(role==="MANAGER"){if(!(reporteeIds.includes(c.assigned_to)||c.assigned_to===myUserId))return false;}
+    if(concludedSearch&&!(c.name.toLowerCase().includes(concludedSearch.toLowerCase())||c.phone.includes(concludedSearch)))return false;
     if(hiredProcessFilter&&c.process_id!==hiredProcessFilter)return false;
     if(hiredPositionFilter&&c.position_type_id!==hiredPositionFilter)return false;
     if(concludedStageFilter&&c.current_stage_id!==concludedStageFilter)return false;
@@ -3894,6 +3927,7 @@ function HireFlowCandidates({ showToast }) {
             ))}
           </div>
           <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+            <input className="filter-input" value={concludedSearch} onChange={e=>setConcludedSearch(e.target.value)} placeholder="Search name or phone" style={{maxWidth:220}}/>
             <FilterSelect value={concludedStageFilter} onChange={setConcludedStageFilter} allLabel="All Outcomes" options={funnelStages.filter(s=>s.is_exit_stage).map(s=>({value:s.id,label:s.name}))}/>
             <FilterSelect value={hiredProcessFilter} onChange={setHiredProcessFilter} allLabel="All Processes" options={processes.map(p=>({value:p.id,label:p.name}))}/>
             <FilterSelect value={hiredPositionFilter} onChange={setHiredPositionFilter} allLabel="All Positions" options={positionTypes.map(p=>({value:p.id,label:p.name}))}/>
@@ -3901,8 +3935,8 @@ function HireFlowCandidates({ showToast }) {
             <input type="date" className="filter-input" value={hiredTo} onChange={e=>setHiredTo(e.target.value)} title="Concluded to date"/>
             <button className="btn btn-sm btn-ghost" onClick={()=>{const t=today();setHiredFrom(t);setHiredTo(t);}}>Today</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>{const t=new Date();const f=new Date();f.setDate(t.getDate()-7);setHiredFrom(f.toISOString().split("T")[0]);setHiredTo(t.toISOString().split("T")[0]);}}>This Week</button>
-            {(concludedStageFilter||hiredProcessFilter||hiredPositionFilter||hiredFrom||hiredTo)&&(
-              <button className="btn btn-sm btn-ghost" onClick={()=>{setConcludedStageFilter("");setHiredProcessFilter("");setHiredPositionFilter("");setHiredFrom("");setHiredTo("");}}>✕ Clear Filters</button>
+            {(concludedSearch||concludedStageFilter||hiredProcessFilter||hiredPositionFilter||hiredFrom||hiredTo)&&(
+              <button className="btn btn-sm btn-ghost" onClick={()=>{setConcludedSearch("");setConcludedStageFilter("");setHiredProcessFilter("");setHiredPositionFilter("");setHiredFrom("");setHiredTo("");}}>✕ Clear Filters</button>
             )}
             {concludedList.length>0&&(
               <button className="btn btn-sm btn-ghost" onClick={()=>setSelectedIds(concludedList.map(c=>c.id))}>Select All Filtered ({concludedList.length})</button>
