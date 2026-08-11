@@ -1504,6 +1504,7 @@ function InterestedCandidates({ showToast }) {
       const phones=[...new Set(dedupedLogs.map(l=>l.phone))];
       let leadsMap={};
       let candidateNameMap={};
+      let candidateStageMap={};
       let dialCountMap={};
       if(phones.length){
         const phoneList=phones.slice(0,50).join(",");
@@ -1514,17 +1515,24 @@ function InterestedCandidates({ showToast }) {
           // this page used to check, so any HireFlow-originated call always
           // showed "Unknown" even though the real name exists right in the
           // candidates table under the same phone number.
-          dbSelect("candidates",`?select=phone,name&phone=in.(${phoneList})`),
+          dbSelect("candidates",`?select=phone,name,current_stage_id&phone=in.(${phoneList})`),
           // Every dial attempt regardless of outcome, so HR can see total
           // times someone's actually been reached out to via IVR — not
           // just the one call that happened to land INTERESTED.
           dbSelect("call_logs",`?select=phone&phone=in.(${phoneList})`),
         ]);
         leads.forEach(l=>leadsMap[l.phone]=l.name);
-        hfCandidates.forEach(c=>candidateNameMap[c.phone]=c.name);
+        // The "Status" column is a local note on this page's own log
+        // (candidate_updates) and doesn't change just because a candidate
+        // got moved into a HireFlow stage from here — a candidate moved to
+        // e.g. Interview Scheduled still shows local Status "PENDING"
+        // forever unless someone separately edits that field too, which
+        // reads as "still pending" even though they've actually moved on.
+        // This tracks their real, live HireFlow stage instead.
+        hfCandidates.forEach(c=>{candidateNameMap[c.phone]=c.name;candidateStageMap[c.phone]=c.current_stage_id;});
         allLogsForPhones.forEach(l=>{dialCountMap[l.phone]=(dialCountMap[l.phone]||0)+1;});
       }
-      const enriched=dedupedLogs.map(l=>({...l,name:candidateNameMap[l.phone]||leadsMap[l.phone]||"Unknown",ivrDialCount:dialCountMap[l.phone]||0}));
+      const enriched=dedupedLogs.map(l=>({...l,name:candidateNameMap[l.phone]||leadsMap[l.phone]||"Unknown",ivrDialCount:dialCountMap[l.phone]||0,hireflowStageId:candidateStageMap[l.phone]||null}));
       setCandidates(enriched);
       setCampaigns([...new Set(logs.map(c=>c.campaign).filter(Boolean))]);
       const updMap={};
@@ -1629,14 +1637,15 @@ function InterestedCandidates({ showToast }) {
               <div className="empty-state"><div className="empty-icon">☆</div><div className="empty-title">No interested candidates yet</div><div className="empty-sub">Candidates who press 1 appear here</div></div>
             ):(
               <table className="table-compact">
-                <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th title="Total IVR dial attempts to this number, any outcome">IVR Attempts</th><th>Status</th><th>Last Update</th><th>By</th><th></th></tr></thead>
-                <tbody>{loading?<SkeletonRows cols={8}/>:filtered.map((c,i)=>{const u=updates[c.phone]?.[0];return(
+                <thead><tr><th>Name</th><th>Phone</th><th>Campaign</th><th title="Total IVR dial attempts to this number, any outcome">IVR Attempts</th><th title="This page's own local note — doesn't change when the candidate is moved to a HireFlow stage below">Status (local)</th><th title="The candidate's actual live stage in HireFlow, if they've been matched/moved there">HireFlow Stage</th><th>Last Update</th><th>By</th><th></th></tr></thead>
+                <tbody>{loading?<SkeletonRows cols={9}/>:filtered.map((c,i)=>{const u=updates[c.phone]?.[0];const hfStage=funnelStages.find(s=>s.id===c.hireflowStageId);return(
                   <tr key={i}>
                     <td style={{fontWeight:500}}>{c.name}</td>
                     <td style={{fontFamily:"monospace"}}>{c.phone}</td>
                     <td>{(c.allCampaigns||[c.campaign]).map(camp=><span key={camp} className="tag" style={{marginRight:4,marginBottom:2,display:"inline-block"}}>{camp}</span>)}</td>
                     <td>{c.ivrDialCount}x</td>
                     <td><DisposBadge sub={u?.status||"PENDING"}/></td>
+                    <td>{hfStage?<span className="badge badge-blue">{hfStage.name}</span>:<span style={{color:T.muted,fontSize:12}}>Not in HireFlow</span>}</td>
                     <td style={{fontSize:12,color:T.muted,maxWidth:180}}>{u?.comment||"—"}</td>
                     <td style={{fontSize:11,color:T.muted}}>{u?.updated_by?.split("@")[0]||"—"}</td>
                     <td style={{display:"flex",gap:6}}>
