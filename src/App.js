@@ -300,6 +300,12 @@ function isManager() { return ["ADMIN","MANAGER"].includes(getRole()); }
 
 async function dbSelect(table, params = "") { return supaFetch(`/rest/v1/${table}${params}`, { headers: { Prefer: "return=representation" } }); }
 async function dbInsert(table, body) { return supaFetch(`/rest/v1/${table}`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) }); }
+// A single bulk insert is one all-or-nothing statement — if any row in the
+// batch collides with a unique constraint (e.g. candidates.phone), the
+// WHOLE batch is rejected, including every valid row alongside it. This
+// tells PostgREST to silently skip only the colliding rows and still
+// insert the rest, instead of failing the entire request over one bad row.
+async function dbInsertIgnoreDup(table, body, conflictCol) { return supaFetch(`/rest/v1/${table}?on_conflict=${conflictCol}`, { method: "POST", headers: { Prefer: "return=representation,resolution=ignore-duplicates" }, body: JSON.stringify(body) }); }
 async function dbUpdate(table, match, body) { return supaFetch(`/rest/v1/${table}?${match}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) }); }
 async function dbDelete(table, match) { return supaFetch(`/rest/v1/${table}?${match}`, { method: "DELETE" }); }
 async function dbRpc(fn, body = {}) { return supaFetch(`/rest/v1/rpc/${fn}`, { method: "POST", body: JSON.stringify(body) }); }
@@ -3690,7 +3696,16 @@ function HireFlowCandidates({ showToast }) {
         added++;
       });
       let inserted=[];
-      if(payload.length)inserted=await dbInsert("candidates",payload);
+      if(payload.length)inserted=await dbInsertIgnoreDup("candidates",payload,"phone");
+      // The client-side existingPhones check only catches duplicates against
+      // candidates already loaded in this browser tab — a phone that exists
+      // in the DB but wasn't in that stale snapshot (e.g. another HR added
+      // it moments ago, or two rows in the CSV itself share a number)
+      // silently gets skipped by the DB instead of failing the whole batch,
+      // so the "added" count here is the real post-insert count, not the
+      // pre-insert attempt count.
+      const dbSkippedDup=payload.length-(inserted?.length||0);
+      skippedDup+=dbSkippedDup;
       const assignedRows=(inserted||[]).filter(c=>c.assigned_to);
       if(assignedRows.length){
         await dbInsert("candidate_activity",assignedRows.map(c=>({
@@ -3698,7 +3713,8 @@ function HireFlowCandidates({ showToast }) {
           remark:`Assigned to ${userMap[c.assigned_to]?.name||userMap[c.assigned_to]?.email||"—"} on upload (round-robin)`,changed_by:myUserId,
         })));
       }
-      showToast(`${added} added, ${skippedDup} duplicates, ${skippedUnmatched} unmatched process/position, ${skippedInvalid} invalid rows skipped`,added?"success":"error");
+      const insertedCount=inserted?.length||0;
+      showToast(`${insertedCount} added, ${skippedDup} duplicates, ${skippedUnmatched} unmatched process/position, ${skippedInvalid} invalid rows skipped`,insertedCount?"success":"error");
       setUploadAssignees([]);
       loadAll();
     }catch{showToast("Upload failed","error");}
