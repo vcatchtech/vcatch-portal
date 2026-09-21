@@ -3217,6 +3217,7 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
   const [rejectionReasonId,setRejectionReasonId]=useState("");
   const [interviewAt,setInterviewAt]=useState("");
   const [attemptRemark,setAttemptRemark]=useState("");
+  const [attemptDate,setAttemptDate]=useState(today());
   const [stageEffectiveDate,setStageEffectiveDate]=useState(today());
   const [reassignTo,setReassignTo]=useState("");
   const [handoffNote,setHandoffNote]=useState("");
@@ -3293,14 +3294,15 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
   }
 
   async function changeStage(){
-    if(!newStage||newStage===candidate.current_stage_id){showToast("Pick a different stage first","error");return;}
+    if(!newStage){showToast("Pick a stage first","error");return;}
     if(newStageNeedsReason&&!rejectionReasonId){showToast(newStageIsRejected?"Pick a rejection reason":"Pick a reason","error");return;}
     if(newStageIsInterview&&!interviewAt){showToast("Pick when the interview is scheduled","error");return;}
     if(newStageIsHired&&openingChoice==="existing"&&!selectedOpeningId){showToast("Pick an opening, or switch to Not Linked / Open a New Position","error");return;}
     if(newStageIsHired&&openingChoice==="new"&&(!newOpeningCompanyId||!newOpeningProcessId||!newOpeningPositionId)){showToast("Pick Company, Process, and Position for the new opening","error");return;}
     setBusy(true);
     try{
-      const update={current_stage_id:newStage,updated_at:new Date().toISOString(),remark:remarkText.trim()||null};
+      const eventIso=stageEffectiveDate?new Date(stageEffectiveDate+"T12:00:00Z").toISOString():new Date().toISOString();
+      const update={current_stage_id:newStage,updated_at:eventIso,remark:remarkText.trim()||null};
       if(newStageNeedsReason)update.rejection_reason_id=rejectionReasonId;
       if(newStageIsInterview)update.interview_scheduled_at=new Date(interviewAt).toISOString();
       await dbUpdate("candidates",`id=eq.${candidate.id}`,update);
@@ -3309,7 +3311,6 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
       const openingNote=newStageIsHired&&openingChoice==="existing"?`Fills opening: ${openingLabel(openOpenings.find(o=>o.id===selectedOpeningId))}`:
         newStageIsHired&&openingChoice==="new"?`Opens new position: ${companyMap[newOpeningCompanyId]} / ${processMap[newOpeningProcessId]} / ${positionMap[newOpeningPositionId]}`:null;
       const remarkParts=[reasonLabel||interviewLabel||openingNote,stageRemark.trim()].filter(Boolean);
-      const eventIso=stageEffectiveDate?new Date(stageEffectiveDate+"T12:00:00Z").toISOString():new Date().toISOString();
       await dbInsert("candidate_activity",{
         candidate_id:candidate.id,type:"STAGE_CHANGE",is_contact_attempt:false,
         from_stage_id:candidate.current_stage_id,to_stage_id:newStage,
@@ -3340,12 +3341,15 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
     if(!attemptRemark.trim()){showToast("Add a quick note about the call","error");return;}
     setBusy(true);
     try{
+      const attemptIso=attemptDate?new Date(attemptDate+"T12:00:00Z").toISOString():new Date().toISOString();
       await dbInsert("candidate_activity",{
         candidate_id:candidate.id,type:"CALL_ATTEMPT",is_contact_attempt:true,
         remark:attemptRemark.trim(),changed_by:myUserId,
+        changed_at:attemptIso,
       });
-      showToast("Logged","success");setAttemptRemark("");
+      showToast("Attempt logged","success");setAttemptRemark("");
       loadActivity();
+      onChanged();
     }catch{showToast("Failed to log","error");}
     finally{setBusy(false);}
   }
@@ -3543,7 +3547,16 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
       <div className="card" style={{marginBottom:16}}>
         <div className="card-header"><div className="card-title">Log a Contact Attempt</div></div>
         <div className="card-body">
-          <div className="field"><label>What happened</label><input value={attemptRemark} onChange={e=>setAttemptRemark(e.target.value)} placeholder="e.g. No answer, tried again"/></div>
+          <div className="two-col" style={{marginBottom:10}}>
+            <div className="field" style={{marginBottom:0}}>
+              <label>Attempt Date</label>
+              <input type="date" value={attemptDate} onChange={e=>setAttemptDate(e.target.value)}/>
+            </div>
+            <div className="field" style={{marginBottom:0}}>
+              <label>What happened</label>
+              <input value={attemptRemark} onChange={e=>setAttemptRemark(e.target.value)} placeholder="e.g. No answer, tried again"/>
+            </div>
+          </div>
           <button className="btn btn-sm" onClick={logAttempt} disabled={busy}>Log Attempt</button>
         </div>
       </div>
