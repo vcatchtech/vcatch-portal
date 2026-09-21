@@ -3995,60 +3995,128 @@ function HireFlowCandidates({ showToast }) {
       const rows=parseCSV(text);
       const existingPhones=new Set(candidates.map(c=>c.phone));
       const newStage=funnelStages.find(s=>s.name==="New");
-      let added=0,skippedDup=0,skippedInvalid=0,skippedUnmatched=0;
+      let added=0,skippedDup=0,skippedInvalid=0;
       const payload=[];
+      const hireDateByPhone={};
+      const stageByPhone={};
+      const attemptsByPhone={};
+
       rows.forEach(row=>{
-        const phone=(row.phone||row.number||"").replace(/\D/g,"");
-        const name=row.name||row.candidate||"";
-        if(!phone||phone.length!==10||!name){skippedInvalid++;return;}
-        if(existingPhones.has(phone)){skippedDup++;return;}
+        const rawPhone = row.phone || row.number || row.mobile || row.contact || row["phone number"] || "";
+        const phone = String(rawPhone).replace(/\D/g,"").slice(-10);
+        const name = (row.name || row.candidate || row["candidate name"] || row["full name"] || "").trim();
+        if(!phone || phone.length !== 10 || !name){ skippedInvalid++; return; }
+        if(existingPhones.has(phone)){ skippedDup++; return; }
 
-        const processText=(row.process||"").trim();
-        const matchedProcess=processText?processes.find(p=>p.name.toLowerCase()===processText.toLowerCase()):null;
-        if(processText&&!matchedProcess){skippedUnmatched++;return;}
+        const processText = (row.process || row["process name"] || row["client process"] || "").trim();
+        const matchedProcess = processText ? processes.find(p=>p.name.toLowerCase() === processText.toLowerCase()) : null;
 
-        const positionText=(row.position||"").trim();
-        const matchedPosition=positionText?positionTypes.find(p=>p.name.toLowerCase()===positionText.toLowerCase()):null;
-        if(positionText&&!matchedPosition){skippedUnmatched++;return;}
+        const positionText = (row.position || row["position type"] || row.role || row.designation || row["job title"] || "").trim();
+        const matchedPosition = positionText ? positionTypes.find(p=>p.name.toLowerCase() === positionText.toLowerCase()) : null;
+
+        const companyText = (row.company || row.client || row.organization || "").trim();
+        const matchedCompany = companyText ? companies.find(c=>c.name.toLowerCase() === companyText.toLowerCase()) : null;
+
+        const stageText = (row.stage || row.status || row.outcome || row["funnel stage"] || "").trim();
+        const matchedStage = stageText ? funnelStages.find(s=>s.name.toLowerCase() === stageText.toLowerCase()) : null;
+        const targetStage = matchedStage || newStage;
+
+        const sourceText = (row.source || row["lead source"] || row.channel || row.portal || "").trim();
+        const matchedSource = sourceText ? leadSources.find(s=>s.name.toLowerCase() === sourceText.toLowerCase()) : null;
+
+        const recruiterText = (row.recruiter || row["assigned to"] || row.assigned_to || row.owner || row.hr || "").trim().toLowerCase();
+        const matchedUser = recruiterText ? users.find(u => (u.name && u.name.toLowerCase() === recruiterText) || (u.email && u.email.toLowerCase() === recruiterText)) : null;
+        const assignedTo = matchedUser ? matchedUser.id : (uploadAssignees.length ? uploadAssignees[added % uploadAssignees.length] : (role==="HR"?myUserId:null));
+
+        const rawHireDate = row["hire date"] || row["hired date"] || row["concluded date"] || row["date of joining"] || row.doj;
+        const hireDateIso = rawHireDate && !isNaN(new Date(rawHireDate).getTime()) ? new Date(String(rawHireDate).includes("T") ? rawHireDate : rawHireDate + "T12:00:00Z").toISOString() : null;
+
+        const rawCreated = row["created at"] || row["added date"] || row["entry date"] || row.date || (hireDateIso ? hireDateIso.split("T")[0] : null);
+        const createdAt = rawCreated && !isNaN(new Date(rawCreated).getTime()) ? new Date(String(rawCreated).includes("T") ? rawCreated : rawCreated + "T09:00:00Z").toISOString() : (hireDateIso || new Date().toISOString());
+
+        const rawAttempts = row.attempts || row["call attempts"] || row["attempt count"] || row["attempts count"] || row.attempted;
+        const attemptCount = rawAttempts ? Math.max(1, parseInt(rawAttempts) || 1) : (targetStage && targetStage.name !== "New" ? 1 : 0);
 
         existingPhones.add(phone);
-        const matchedSource=leadSources.find(s=>s.name.toLowerCase()===(row.source||"").trim().toLowerCase());
-        const assignedTo=uploadAssignees.length?uploadAssignees[added%uploadAssignees.length]:null;
+        if (hireDateIso) hireDateByPhone[phone] = hireDateIso;
+        if (targetStage) stageByPhone[phone] = targetStage;
+        if (attemptCount) attemptsByPhone[phone] = attemptCount;
+
         payload.push({
-          name,phone,
-          current_salary:row["current salary"]||null,expected_salary:row["expected salary"]||null,
-          location:row.location||null,source_id:matchedSource?.id||null,
-          process_id:matchedProcess?.id||null,position_type_id:matchedPosition?.id||null,
-          languages_spoken:row.language||row["language spoken"]||null,
-          current_stage_id:newStage?.id||null,uploaded_by:myUserId,
-          assigned_to:assignedTo,assigned_at:assignedTo?new Date().toISOString():null,
+          name, phone,
+          company_id: matchedCompany?.id || null,
+          process_id: matchedProcess?.id || null,
+          position_type_id: matchedPosition?.id || null,
+          source_id: matchedSource?.id || null,
+          current_stage_id: targetStage?.id || null,
+          current_salary: row["current salary"] || row.current_salary || row.ctc || row["current ctc"] || null,
+          expected_salary: row["expected salary"] || row.expected_salary || row["expected ctc"] || row.ectc || null,
+          location: row.location || row.city || row["current location"] || null,
+          languages_spoken: row.languages || row.language || row["languages spoken"] || row["languages_spoken"] || null,
+          remark: (row.remark || row.remarks || row.comment || row.comments || row.note || row.notes || "").trim() || null,
+          uploaded_by: myUserId,
+          assigned_to: assignedTo,
+          assigned_at: assignedTo ? createdAt : null,
+          created_at: createdAt,
+          updated_at: createdAt,
         });
         added++;
       });
+
       let inserted=[];
       if(payload.length)inserted=await dbInsertIgnoreDup("candidates",payload,"phone");
-      // The client-side existingPhones check only catches duplicates against
-      // candidates already loaded in this browser tab — a phone that exists
-      // in the DB but wasn't in that stale snapshot (e.g. another HR added
-      // it moments ago, or two rows in the CSV itself share a number)
-      // silently gets skipped by the DB instead of failing the whole batch,
-      // so the "added" count here is the real post-insert count, not the
-      // pre-insert attempt count.
       const dbSkippedDup=payload.length-(inserted?.length||0);
       skippedDup+=dbSkippedDup;
-      const assignedRows=(inserted||[]).filter(c=>c.assigned_to);
-      if(assignedRows.length){
-        await dbInsert("candidate_activity",assignedRows.map(c=>({
-          candidate_id:c.id,type:"ASSIGNMENT",is_contact_attempt:false,
-          remark:`Assigned to ${userMap[c.assigned_to]?.name||userMap[c.assigned_to]?.email||"—"} on upload (round-robin)`,changed_by:myUserId,
-        })));
+
+      if(inserted && inserted.length){
+        const activities=[];
+        inserted.forEach(c=>{
+          const candDate = c.created_at || new Date().toISOString();
+          if(c.assigned_to){
+            activities.push({
+              candidate_id:c.id,type:"ASSIGNMENT",is_contact_attempt:false,
+              remark:`Assigned to ${userMap[c.assigned_to]?.name||userMap[c.assigned_to]?.email||"—"} on upload`,
+              changed_by:myUserId,
+              changed_at:candDate,
+            });
+          }
+
+          const attempts = attemptsByPhone[c.phone] || 0;
+          for(let i=0; i<attempts; i++){
+            activities.push({
+              candidate_id:c.id,type:"CALL_ATTEMPT",is_contact_attempt:true,
+              remark:"Contact attempt logged on upload",
+              changed_by:myUserId,
+              changed_at:candDate,
+            });
+          }
+
+          const stage=stageByPhone[c.phone]||stageMap[c.current_stage_id];
+          if(stage && (stage.is_exit_stage || stage.name!=="New")){
+            const dateOfStage=hireDateByPhone[c.phone]||candDate;
+            activities.push({
+              candidate_id:c.id,type:"STAGE_CHANGE",is_contact_attempt:false,
+              to_stage_id:stage.id,
+              remark:`Imported record (Status: ${stage.name})`,
+              changed_by:myUserId,
+              changed_at:dateOfStage,
+            });
+          }
+        });
+        if(activities.length){
+          await dbInsert("candidate_activity",activities);
+        }
       }
+
       const insertedCount=inserted?.length||0;
-      showToast(`${insertedCount} added, ${skippedDup} duplicates, ${skippedUnmatched} unmatched process/position, ${skippedInvalid} invalid rows skipped`,insertedCount?"success":"error");
+      showToast(`${insertedCount} candidate(s) imported, ${skippedDup} duplicates skipped, ${skippedInvalid} invalid skipped`,insertedCount?"success":"warn");
       setUploadAssignees([]);
       loadAll();
-    }catch{showToast("Upload failed","error");}
-    finally{setUploading(false);if(fileRef.current)fileRef.current.value="";}
+    }catch(e){
+      showToast("Upload failed: "+(e.message||"error"),"error");
+    }finally{
+      setUploading(false);if(fileRef.current)fileRef.current.value="";
+    }
   }
 
   async function toggleHighlight(c){
@@ -4179,7 +4247,9 @@ function HireFlowCandidates({ showToast }) {
                 </>
               )}
             </div>
-            <button className="btn btn-sm btn-ghost" onClick={()=>downloadCSV("hireflow_upload_template.csv",["name","phone","current salary","expected salary","location","process","position","source","language"],[["Jane Doe","9876543210","18000","22000","Bangalore","Cred","Calling Executive","Work India","Hindi, English"]])}>Download Template</button>
+            <button className="btn btn-sm btn-ghost" onClick={()=>downloadCSV("hireflow_upload_template.csv",
+              ["name","phone","process","position","stage","company","hire date","assigned to","attempts","current salary","expected salary","location","source","language","remarks","added date"],
+              [["Jane Doe","9876543210","Cred","Calling Executive","Hired","VCatch","2026-08-15","hr@vcatch.com","2","18000","22000","Bangalore","Work India","Hindi, English","Imported legacy hire","2026-08-01"]])}>Download Template</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>fileRef.current?.click()} disabled={uploading}>{uploading?"Uploading...":"Upload CSV"}</button>
             <button className="btn btn-sm" onClick={()=>setShowAdd(true)}>Add Candidate</button>
           </div>
