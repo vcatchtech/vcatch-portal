@@ -589,7 +589,7 @@ function Dashboard({ showToast, role }) {
   async function loadHireFlowSummary(){
     try{
       const [cands,stages,activity]=await Promise.all([
-        dbSelect("candidates","?select=id,current_stage_id,assigned_to,assigned_at"),
+        dbSelect("candidates","?select=id,current_stage_id,assigned_to,assigned_at,updated_at,created_at"),
         dbSelect("funnel_stages","?select=id,name,sort_order,is_exit_stage&order=sort_order"),
         dbSelect("candidate_activity","?select=candidate_id,type,to_stage_id,changed_at&type=in.(CALL_ATTEMPT,STAGE_CHANGE)"),
       ]);
@@ -605,16 +605,29 @@ function Dashboard({ showToast, role }) {
       });
       const ownerScopedIds=new Set(ownerScoped.map(c=>c.id));
 
-      const scoped=ownerScoped.filter(c=>{
+      const hireDateByCand={};
+      activity.filter(a=>a.type==="STAGE_CHANGE"&&a.to_stage_id===hiredId).forEach(a=>{
+        if(!hireDateByCand[a.candidate_id] || new Date(a.changed_at) > new Date(hireDateByCand[a.candidate_id])){
+          hireDateByCand[a.candidate_id]=a.changed_at;
+        }
+      });
+
+      const inRange=iso=>{
         if(!hfDateFrom&&!hfDateTo)return true;
-        if(!c.assigned_at)return false;
-        const d=new Date(c.assigned_at).toISOString().split("T")[0];
+        if(!iso)return false;
+        const d=new Date(iso).toISOString().split("T")[0];
         if(hfDateFrom&&d<hfDateFrom)return false;
         if(hfDateTo&&d>hfDateTo)return false;
         return true;
+      };
+
+      const scoped=ownerScoped.filter(c=>{
+        if(!hfDateFrom&&!hfDateTo)return true;
+        const eventDate = (stageName[c.current_stage_id]==="Hired" ? hireDateByCand[c.id] : null) || c.assigned_at || c.updated_at || c.created_at;
+        return inRange(eventDate);
       });
       const total=scoped.length;
-      const hiredCurrent=scoped.filter(c=>stageName[c.current_stage_id]==="Hired").length;
+      const hiredCurrent=ownerScoped.filter(c=>stageName[c.current_stage_id]==="Hired" && inRange(hireDateByCand[c.id]||c.updated_at||c.assigned_at||c.created_at)).length;
       const rejected=scoped.filter(c=>stageName[c.current_stage_id]==="Rejected").length;
       const notInterested=scoped.filter(c=>stageName[c.current_stage_id]==="Not Interested").length;
       const inPipeline=total-hiredCurrent-rejected-notInterested;
@@ -623,29 +636,20 @@ function Dashboard({ showToast, role }) {
         key:s.name,count:scoped.filter(c=>c.current_stage_id===s.id).length,color:s.is_exit_stage?T.purple:T.accent,
       })));
 
-      const inRange=iso=>{
-        if(!hfDateFrom&&!hfDateTo)return true;
-        const d=new Date(iso).toISOString().split("T")[0];
-        if(hfDateFrom&&d<hfDateFrom)return false;
-        if(hfDateTo&&d>hfDateTo)return false;
-        return true;
-      };
       const scopedActivity=activity.filter(a=>ownerScopedIds.has(a.candidate_id)&&inRange(a.changed_at));
       const attemptEvents=scopedActivity.filter(a=>a.type==="CALL_ATTEMPT");
       const interviewEvents=interviewId?scopedActivity.filter(a=>a.type==="STAGE_CHANGE"&&a.to_stage_id===interviewId):[];
-      // Bucketed by assigned_at (not the hire's own changed_at) so the trend
-      // chart's bars always sum to exactly the Hired KPI below — both use the
-      // same assigned-in-range cohort. A candidate hired long after being
-      // assigned would otherwise show up in the KPI total but fall outside
-      // the visible date buckets, making the chart look like it doesn't add up.
-      const hireEventsInRange=scoped.filter(c=>stageName[c.current_stage_id]==="Hired").map(c=>({candidate_id:c.id,changed_at:c.assigned_at}));
+
+      // Hire events mapped to the ACTUAL hire date so Hiring Trend chart accurately reflects historical hire dates
+      const hireEventsInRange=ownerScoped.filter(c=>stageName[c.current_stage_id]==="Hired").map(c=>({
+        candidate_id:c.id,
+        changed_at:hireDateByCand[c.id]||c.updated_at||c.assigned_at||c.created_at,
+      })).filter(h=>inRange(h.changed_at));
+
       setHfAttemptEvents(attemptEvents);
       setHfHireEvents(hireEventsInRange);
 
       const hired=hiredCurrent;
-      // Attempted counts unique candidates reached, not every logged attempt
-      // — a candidate called 3 times in the range was inflating this to 3
-      // instead of 1 person actually attempted.
       const uniqueAttempted=new Set(attemptEvents.map(a=>a.candidate_id)).size;
       setHfSummary({total,hired,rejected,notInterested,inPipeline,conversion:total?Math.round((hired/total)*100):0,attempted:uniqueAttempted,interviews:interviewEvents.length});
 
