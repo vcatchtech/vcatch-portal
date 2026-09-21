@@ -2981,8 +2981,10 @@ function DemoIVRManager({ showToast, onDataChanged }) {
   const [demoCampaignCount,setDemoCampaignCount]=useState(0);
   const [demoLeadsCount,setDemoLeadsCount]=useState(0);
   const [demoLogsCount,setDemoLogsCount]=useState(0);
-  const [leadCount,setLeadCount]=useState(50);
-  const [campaignName,setCampaignName]=useState("[DEMO] Recruitment Voicebot 2026");
+  const [campaignName,setCampaignName]=useState("[DEMO] September Voicebot Outreach 2026");
+  const [demoDateFrom,setDemoDateFrom]=useState("2026-09-01");
+  const [demoDateTo,setDemoDateTo]=useState("2026-09-19");
+  const [dailyCalls,setDailyCalls]=useState(20);
 
   useEffect(()=>{checkDemoData();},[]);
 
@@ -3002,77 +3004,92 @@ function DemoIVRManager({ showToast, onDataChanged }) {
   async function generateDemoData(){
     setLoading(true);
     try{
-      const campName=campaignName.trim()||"[DEMO] Recruitment Voicebot 2026";
+      const campName=campaignName.trim()||"[DEMO] September Voicebot Outreach 2026";
+      
+      const firstNames=["Aarav","Aditi","Amit","Ananya","Ankit","Deepak","Divya","Gaurav","Harsh","Ishaan","Kavya","Manish","Megha","Neha","Nikhil","Pooja","Prateek","Priya","Rahul","Riya","Rohan","Rohit","Sakshi","Sameer","Siddharth","Sneha","Suraj","Tanvi","Varun","Vikas","Vikram","Yash","Kiran","Shweta","Arjun","Sanjay","Prakash","Sunita","Ravi","Geeta","Manjunath","Abhishek","Karthik","Naveen","Ashwin","Swathi","Keerthi","Sandhya","Rashmi","Pavithra"];
+      const lastNames=["Sharma","Verma","Gupta","Nair","Patel","Reddy","Rao","Singh","Das","Mishra","Joshi","Kulkarni","Mehta","Chopra","Bhatia","Iyer","Menon","Agarwal","Deshmukh","Pillai","Gowda","Kumar","Shetty","Hegde","Babu"];
+
+      // Calculate days in selected date range
+      const start = new Date(demoDateFrom || "2026-09-01");
+      const end = new Date(demoDateTo || "2026-09-19");
+      const dayList = [];
+      for(let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)){
+        dayList.push(d.toISOString().split("T")[0]);
+      }
+      if(!dayList.length) dayList.push(today());
+
+      const generatedLeads=[];
+      const generatedLogs=[];
+      let phoneCounter = 9845100000 + Math.floor(Math.random() * 10000);
+
+      dayList.forEach((dayStr, dIdx) => {
+        const callsToday = Math.max(5, dailyCalls + ((dIdx * 3) % 7) - 3);
+        for(let c = 0; c < callsToday; c++){
+          phoneCounter += Math.floor(Math.random() * 40) + 1;
+          const phone = String(phoneCounter).slice(0, 10);
+          const fname = firstNames[(dIdx * 3 + c * 7) % firstNames.length];
+          const lname = lastNames[(dIdx * 5 + c * 3) % lastNames.length];
+          const name = `${fname} ${lname}`;
+
+          // Spread call times between 09:30 AM and 06:30 PM
+          const hour = 9 + Math.floor((c / callsToday) * 9);
+          const minute = Math.floor(Math.random() * 60);
+          const second = Math.floor(Math.random() * 60);
+          const callTimeIso = new Date(`${dayStr}T${String(hour).padStart(2,"0")}:${String(minute).padStart(2,"0")}:${String(second).padStart(2,"0")}+05:30`).toISOString();
+
+          const rand = Math.random();
+          let mainDisp = "CONNECTED";
+          let subDisp = "INTERESTED";
+
+          if(rand < 0.42){
+            subDisp = "INTERESTED";
+            mainDisp = "CONNECTED";
+          }else if(rand < 0.70){
+            subDisp = "NOT_INTERESTED";
+            mainDisp = "CONNECTED";
+          }else if(rand < 0.84){
+            subDisp = "NO_RESPONSE";
+            mainDisp = "NOT_CONNECTED";
+          }else if(rand < 0.93){
+            subDisp = "BUSY";
+            mainDisp = "NOT_CONNECTED";
+          }else if(rand < 0.97){
+            subDisp = "INVALID_INPUT";
+            mainDisp = "CONNECTED";
+          }else{
+            subDisp = "CALL_DISCONNECTED";
+            mainDisp = "CONNECTED";
+          }
+
+          generatedLeads.push({
+            name,phone,campaign:campName,
+            status:"CALLED_FINAL",attempt_count:1,
+            max_retries:2,retry_after_minutes:30,
+            eligible_at:callTimeIso,
+          });
+
+          generatedLogs.push({
+            phone,campaign:campName,
+            main_disposition:mainDisp,
+            sub_disposition:subDisp,
+            logged_at:callTimeIso,
+          });
+        }
+      });
+
       try{
         await dbInsert("campaigns",{
           name:campName,
-          description:"Demo IVR Campaign for review presentation",
+          description:`Demo IVR Campaign for ${demoDateFrom} to ${demoDateTo}`,
           caller_id:"+918047189000",
           status:"COMPLETED",
-          total_leads:leadCount,
-          called_count:leadCount,
+          total_leads:generatedLeads.length,
+          called_count:generatedLeads.length,
           pending_count:0,
           max_retries:2,
           retry_after_minutes:30,
         });
       }catch{}
-
-      const firstNames=["Aarav","Aditi","Amit","Ananya","Ankit","Deepak","Divya","Gaurav","Harsh","Ishaan","Kavya","Manish","Megha","Neha","Nikhil","Pooja","Prateek","Priya","Rahul","Riya","Rohan","Rohit","Sakshi","Sameer","Siddharth","Sneha","Suraj","Tanvi","Varun","Vikas","Vikram","Yash","Kiran","Shweta","Arjun","Sanjay","Prakash","Sunita","Ravi","Geeta"];
-      const lastNames=["Sharma","Verma","Gupta","Nair","Patel","Reddy","Rao","Singh","Das","Mishra","Joshi","Kulkarni","Mehta","Chopra","Bhatia","Iyer","Menon","Agarwal","Deshmukh","Pillai"];
-
-      const generatedLeads=[];
-      const generatedLogs=[];
-      const now=new Date();
-
-      for(let i=0;i<leadCount;i++){
-        const fname=firstNames[i%firstNames.length];
-        const lname=lastNames[(i*3)%lastNames.length];
-        const name=`${fname} ${lname}`;
-        const phone=`98${Math.floor(10000000+Math.random()*90000000)}`;
-
-        const daysAgo=(i%4);
-        const callTime=new Date(now.getTime()-(daysAgo*24*60+Math.floor(Math.random()*480)+60)*60*1000);
-
-        const rand=Math.random();
-        let mainDisp="CONNECTED";
-        let subDisp="INTERESTED";
-
-        if(rand<0.42){
-          subDisp="INTERESTED";
-          mainDisp="CONNECTED";
-        }else if(rand<0.68){
-          subDisp="NOT_INTERESTED";
-          mainDisp="CONNECTED";
-        }else if(rand<0.82){
-          subDisp="NO_RESPONSE";
-          mainDisp="NOT_CONNECTED";
-        }else if(rand<0.92){
-          subDisp="BUSY";
-          mainDisp="NOT_CONNECTED";
-        }else if(rand<0.96){
-          subDisp="INVALID_INPUT";
-          mainDisp="CONNECTED";
-        }else{
-          subDisp="CALL_DISCONNECTED";
-          mainDisp="CONNECTED";
-        }
-
-        generatedLeads.push({
-          name,phone,campaign:campName,
-          status:"CALLED_FINAL",attempt_count:1,
-          max_retries:2,retry_after_minutes:30,
-          eligible_at:callTime.toISOString(),
-          created_at:callTime.toISOString(),
-          updated_at:callTime.toISOString(),
-        });
-
-        generatedLogs.push({
-          phone,campaign:campName,
-          main_disposition:mainDisp,
-          sub_disposition:subDisp,
-          logged_at:callTime.toISOString(),
-        });
-      }
 
       const chunkSize=40;
       for(let i=0;i<generatedLeads.length;i+=chunkSize){
@@ -3080,7 +3097,7 @@ function DemoIVRManager({ showToast, onDataChanged }) {
         await dbInsert("call_logs",generatedLogs.slice(i,i+chunkSize));
       }
 
-      showToast(`Generated ${leadCount} demo leads & call logs!`,"success");
+      showToast(`Generated ${generatedLogs.length} demo IVR calls across ${dayList.length} days (${demoDateFrom} to ${demoDateTo})!`,"success");
       await checkDemoData();
       if(onDataChanged)onDataChanged();
     }catch(e){
@@ -3091,7 +3108,7 @@ function DemoIVRManager({ showToast, onDataChanged }) {
   }
 
   async function deleteDemoData(){
-    if(!window.confirm("Are you sure you want to delete all demo IVR data ([DEMO] campaigns, leads, and call logs)?"))return;
+    if(!window.confirm("Are you sure you want to delete all demo IVR data ([DEMO] campaigns, leads, and call logs)? This will completely clean up the demo data."))return;
     setLoading(true);
     try{
       await Promise.all([
@@ -3139,30 +3156,38 @@ function DemoIVRManager({ showToast, onDataChanged }) {
 
         <div style={{background:T.bg,padding:16,borderRadius:10,border:`1px solid ${T.border}`,marginBottom:20}}>
           <div style={{fontWeight:600,fontSize:14,marginBottom:12}}>Generate New Demo Dataset</div>
-          <div className="two-col" style={{marginBottom:12}}>
+          <div className="field" style={{marginBottom:10}}>
+            <label>Campaign Name</label>
+            <input value={campaignName} onChange={e=>setCampaignName(e.target.value)} placeholder="[DEMO] September Voicebot Outreach 2026"/>
+          </div>
+          <div className="three-col" style={{marginBottom:14}}>
             <div className="field" style={{marginBottom:0}}>
-              <label>Campaign Name</label>
-              <input value={campaignName} onChange={e=>setCampaignName(e.target.value)} placeholder="[DEMO] Voicebot Campaign"/>
+              <label>From Date</label>
+              <input type="date" value={demoDateFrom} onChange={e=>setDemoDateFrom(e.target.value)}/>
             </div>
             <div className="field" style={{marginBottom:0}}>
-              <label>Number of Leads & Calls</label>
-              <select value={leadCount} onChange={e=>setLeadCount(Number(e.target.value))}>
-                <option value={25}>25 leads (Quick)</option>
-                <option value={50}>50 leads (Recommended)</option>
-                <option value={100}>100 leads (Comprehensive)</option>
+              <label>To Date</label>
+              <input type="date" value={demoDateTo} onChange={e=>setDemoDateTo(e.target.value)}/>
+            </div>
+            <div className="field" style={{marginBottom:0}}>
+              <label>Avg Calls / Day</label>
+              <select value={dailyCalls} onChange={e=>setDailyCalls(Number(e.target.value))}>
+                <option value={10}>10 calls/day (~190 total)</option>
+                <option value={20}>20 calls/day (~380 total - Recommended)</option>
+                <option value={30}>30 calls/day (~570 total)</option>
               </select>
             </div>
           </div>
           <button className="btn btn-sm btn-green" onClick={generateDemoData} disabled={loading}>
-            {loading?"Generating...":"⚡ Generate Demo IVR Data"}
+            {loading?"Generating...":"⚡ Generate Sep 1 - Sep 19 IVR Data"}
           </button>
         </div>
 
         {hasDemoData&&(
           <div style={{background:T.mode==="light"?"#FFF5F5":"#2A1518",padding:16,borderRadius:10,border:`1px solid ${T.red}44`,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
             <div>
-              <div style={{fontWeight:600,fontSize:14,color:T.red}}>Clean Up Demo Data</div>
-              <div style={{fontSize:12,color:T.muted,marginTop:2}}>Permanently delete all [DEMO] campaigns, leads, and call logs to return to a clean state after your review.</div>
+              <div style={{fontWeight:600,fontSize:14,color:T.red}}>Clean Up Demo Data (After Review)</div>
+              <div style={{fontSize:12,color:T.muted,marginTop:2}}>Permanently delete all [DEMO] campaigns, leads, and call logs to return to a clean state after your review tomorrow.</div>
             </div>
             <button className="btn btn-sm btn-danger" onClick={deleteDemoData} disabled={loading}>
               {loading?"Deleting...":"🗑️ Delete All Demo IVR Data"}
