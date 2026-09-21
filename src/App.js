@@ -3992,11 +3992,12 @@ function HireFlowCandidates({ showToast }) {
     setUploading(true);
     try{
       const text=await file.text();
-      const rows=parseCSV(text);
-      const existingPhones=new Set(candidates.map(c=>c.phone));
+      const existingCandByPhone={};
+      candidates.forEach(c=>{if(c.phone)existingCandByPhone[c.phone]=c;});
       const newStage=funnelStages.find(s=>s.name==="New");
-      let added=0,skippedDup=0,skippedInvalid=0;
+      let added=0,updatedExistingCount=0,skippedDup=0,skippedInvalid=0;
       const payload=[];
+      const existingUpdates=[];
       const hireDateByPhone={};
       const stageByPhone={};
       const attemptsByPhone={};
@@ -4005,8 +4006,7 @@ function HireFlowCandidates({ showToast }) {
         const rawPhone = row.phone || row.number || row.mobile || row.contact || row["phone number"] || "";
         const phone = String(rawPhone).replace(/\D/g,"").slice(-10);
         const name = (row.name || row.candidate || row["candidate name"] || row["full name"] || "").trim();
-        if(!phone || phone.length !== 10 || !name){ skippedInvalid++; return; }
-        if(existingPhones.has(phone)){ skippedDup++; return; }
+        if(!phone || phone.length !== 10 || (!name && !existingCandByPhone[phone])){ skippedInvalid++; return; }
 
         const processText = (row.process || row["process name"] || row["client process"] || "").trim();
         const matchedProcess = processText ? processes.find(p=>p.name.toLowerCase() === processText.toLowerCase()) : null;
@@ -4037,11 +4037,33 @@ function HireFlowCandidates({ showToast }) {
         const rawAttempts = row.attempts || row["call attempts"] || row["attempt count"] || row["attempts count"] || row.attempted;
         const attemptCount = rawAttempts ? Math.max(1, parseInt(rawAttempts) || 1) : (targetStage && targetStage.name !== "New" ? 1 : 0);
 
-        existingPhones.add(phone);
         if (hireDateIso) hireDateByPhone[phone] = hireDateIso;
         if (targetStage) stageByPhone[phone] = targetStage;
         if (attemptCount) attemptsByPhone[phone] = attemptCount;
 
+        const existingCand = existingCandByPhone[phone];
+        if (existingCand) {
+          existingUpdates.push({
+            id: existingCand.id,
+            phone,
+            name: name || existingCand.name,
+            current_stage_id: matchedStage ? matchedStage.id : existingCand.current_stage_id,
+            assigned_to: assignedTo || existingCand.assigned_to,
+            company_id: matchedCompany ? matchedCompany.id : existingCand.company_id,
+            process_id: matchedProcess ? matchedProcess.id : existingCand.process_id,
+            position_type_id: matchedPosition ? matchedPosition.id : existingCand.position_type_id,
+            source_id: matchedSource ? matchedSource.id : existingCand.source_id,
+            remark: (row.remark || row.remarks || row.comment || "").trim() || existingCand.remark,
+            updated_at: hireDateIso || createdAt,
+            _hireDateIso: hireDateIso,
+            _stage: matchedStage || stageMap[existingCand.current_stage_id],
+            _attempts: attemptCount,
+          });
+          updatedExistingCount++;
+          return;
+        }
+
+        existingCandByPhone[phone] = { phone };
         payload.push({
           name, phone,
           company_id: matchedCompany?.id || null,
@@ -4068,8 +4090,9 @@ function HireFlowCandidates({ showToast }) {
       const dbSkippedDup=payload.length-(inserted?.length||0);
       skippedDup+=dbSkippedDup;
 
+      // Handle activities for newly inserted candidates
+      const activities=[];
       if(inserted && inserted.length){
-        const activities=[];
         inserted.forEach(c=>{
           const candDate = c.created_at || new Date().toISOString();
           if(c.assigned_to){
@@ -4103,13 +4126,48 @@ function HireFlowCandidates({ showToast }) {
             });
           }
         });
-        if(activities.length){
-          await dbInsert("candidate_activity",activities);
+      }
+
+      // Handle updates and activities for existing candidates (e.g. tagging as Hired with past hire date)
+      if(existingUpdates.length){
+        for(const u of existingUpdates){
+          await dbUpdate("candidates",`id=eq.${u.id}`,{
+            current_stage_id:u.current_stage_id,
+            assigned_to:u.assigned_to,
+            company_id:u.company_id,
+            process_id:u.process_id,
+            position_type_id:u.position_type_id,
+            source_id:u.source_id,
+            remark:u.remark,
+            updated_at:u.updated_at,
+          });
+          const dateOfEvent = u._hireDateIso || u.updated_at || new Date().toISOString();
+          if(u._stage && u._stage.is_exit_stage){
+            activities.push({
+              candidate_id:u.id,type:"STAGE_CHANGE",is_contact_attempt:false,
+              to_stage_id:u.current_stage_id,
+              remark:`Status updated on import: ${u._stage.name}`,
+              changed_by:myUserId,
+              changed_at:dateOfEvent,
+            });
+          }
+          for(let i=0; i<(u._attempts||0); i++){
+            activities.push({
+              candidate_id:u.id,type:"CALL_ATTEMPT",is_contact_attempt:true,
+              remark:"Contact attempt logged on upload",
+              changed_by:myUserId,
+              changed_at:dateOfEvent,
+            });
+          }
         }
       }
 
+      if(activities.length){
+        await dbInsert("candidate_activity",activities);
+      }
+
       const insertedCount=inserted?.length||0;
-      showToast(`${insertedCount} candidate(s) imported, ${skippedDup} duplicates skipped, ${skippedInvalid} invalid skipped`,insertedCount?"success":"warn");
+      showToast(`${insertedCount} new added, ${updatedExistingCount} existing updated, ${skippedInvalid} invalid skipped`,"success");
       setUploadAssignees([]);
       loadAll();
     }catch(e){
