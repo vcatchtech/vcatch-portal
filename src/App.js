@@ -3592,6 +3592,34 @@ function HireFlowCandidates({ showToast }) {
     downloadCSV(`hireflow_candidates_${today()}.csv`,headers,rows);
   }
 
+  function exportConcludedCSV(){
+    const headers=["Name","Phone","Process","Position","Outcome","Assigned To","Concluded Date","Linked Opening","IVR Attempts","Remarks","Current Salary","Expected Salary","Location","Source","Languages Spoken","Created At"];
+    const rows=concludedList.map(c=>{
+      const owner=userMap[c.assigned_to];
+      const stage=stageMap[c.current_stage_id];
+      const summary=activitySummary[c.id];
+      return [
+        c.name,
+        c.phone,
+        processMap[c.process_id]||"",
+        positionMap[c.position_type_id]||"",
+        stage?.name||"",
+        owner?(owner.name||owner.email):"Unassigned",
+        hiredDateMap[c.id]?new Date(hiredDateMap[c.id]).toLocaleDateString("en-IN"):"",
+        c.filled_opening_id?"Linked":"",
+        summary?.ivrCount||0,
+        c.remark||"",
+        c.current_salary||"",
+        c.expected_salary||"",
+        c.location||"",
+        sourceMap[c.source_id]||"",
+        c.languages_spoken||"",
+        c.created_at?new Date(c.created_at).toLocaleDateString("en-IN"):"",
+      ];
+    });
+    downloadCSV(`concluded_cases_${today()}.csv`,headers,rows);
+  }
+
   function isStale(c){
     return daysUntouched(c)>=1;
   }
@@ -3950,7 +3978,13 @@ function HireFlowCandidates({ showToast }) {
             </div>
           )}
           <div className="card">
-            <div className="card-header"><div className="card-title">Concluded Cases ({concludedList.length})</div><button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button></div>
+            <div className="card-header">
+              <div className="card-title">Concluded Cases ({concludedList.length})</div>
+              <div style={{display:"flex",gap:8}}>
+                <button className="btn btn-sm btn-ghost" onClick={exportConcludedCSV} disabled={concludedList.length===0}>Download CSV</button>
+                <button className="btn btn-sm btn-ghost" onClick={loadAll}>↻</button>
+              </div>
+            </div>
             <div className="table-wrap">
               {loading?<div className="empty-state">Loading...</div>:concludedList.length===0?<div className="empty-state"><div className="empty-icon">⬡</div><div className="empty-title">No concluded cases yet</div></div>:(
                 <table className="table-compact">
