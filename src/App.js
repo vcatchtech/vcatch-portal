@@ -999,6 +999,7 @@ function Campaigns({ showToast }) {
   const [showCreate,setShowCreate]=useState(false);
   const [deleteTarget,setDeleteTarget]=useState(null);
   const [actionLoading,setActionLoading]=useState(null);
+  const [showDemoModal,setShowDemoModal]=useState(false);
   const [form,setForm]=useState({name:"",description:"",caller_id:"",max_retries:1,retry_after_minutes:30});
 
   useEffect(()=>{load();loadCallerIds();const i=setInterval(load,5000);return()=>clearInterval(i);},[]);
@@ -1047,7 +1048,10 @@ function Campaigns({ showToast }) {
     <div>
       <div className="page-header">
         <div><div className="page-title">Campaigns</div><div className="page-sub">Only one can run at a time — use pause/resume to switch</div></div>
-        <button className="btn btn-sm" onClick={()=>setShowCreate(true)}>+ New Campaign</button>
+        <div style={{display:"flex",gap:8}}>
+          <button className="btn btn-sm btn-ghost" onClick={()=>setShowDemoModal(true)}>⚡ Demo Data</button>
+          <button className="btn btn-sm" onClick={()=>setShowCreate(true)}>+ New Campaign</button>
+        </div>
       </div>
       <div className="page-content">
         {systemCampaigns.length>0&&(
@@ -1165,6 +1169,12 @@ function Campaigns({ showToast }) {
         <Modal title="Delete Campaign" onClose={()=>setDeleteTarget(null)}
           actions={<><button className="btn btn-sm btn-ghost" onClick={()=>setDeleteTarget(null)}>Cancel</button><button className="btn btn-sm btn-danger" onClick={confirmDelete}>{actionLoading?"Deleting...":"Yes, Delete"}</button></>}>
           <div className="info-box red">This will permanently delete "<strong>{deleteTarget}</strong>" and all its PENDING leads. Called leads and logs are kept.</div>
+        </Modal>
+      )}
+
+      {showDemoModal&&(
+        <Modal title="Demo IVR Data Manager" sub="Generate realistic test calls & leads for reviews, or delete them anytime" onClose={()=>setShowDemoModal(false)}>
+          <DemoIVRManager showToast={showToast} onDataChanged={load}/>
         </Modal>
       )}
     </div>
@@ -2962,9 +2972,207 @@ function PositionOpenings({ showToast }) {
   );
 }
 
+function DemoIVRManager({ showToast, onDataChanged }) {
+  const [loading,setLoading]=useState(false);
+  const [demoCampaignCount,setDemoCampaignCount]=useState(0);
+  const [demoLeadsCount,setDemoLeadsCount]=useState(0);
+  const [demoLogsCount,setDemoLogsCount]=useState(0);
+  const [leadCount,setLeadCount]=useState(50);
+  const [campaignName,setCampaignName]=useState("[DEMO] Recruitment Voicebot 2026");
+
+  useEffect(()=>{checkDemoData();},[]);
+
+  async function checkDemoData(){
+    try{
+      const [camps,lds,lgs]=await Promise.all([
+        dbSelect("campaigns","?select=name&name=like.*DEMO*"),
+        dbSelect("leads","?select=id&campaign=like.*DEMO*"),
+        dbSelect("call_logs","?select=id&campaign=like.*DEMO*"),
+      ]);
+      setDemoCampaignCount(camps.length);
+      setDemoLeadsCount(lds.length);
+      setDemoLogsCount(lgs.length);
+    }catch{}
+  }
+
+  async function generateDemoData(){
+    setLoading(true);
+    try{
+      const campName=campaignName.trim()||"[DEMO] Recruitment Voicebot 2026";
+      try{
+        await dbInsert("campaigns",{
+          name:campName,
+          description:"Demo IVR Campaign for review presentation",
+          caller_id:"+918047189000",
+          status:"COMPLETED",
+          total_leads:leadCount,
+          called_count:leadCount,
+          pending_count:0,
+          max_retries:2,
+          retry_after_minutes:30,
+        });
+      }catch{}
+
+      const firstNames=["Aarav","Aditi","Amit","Ananya","Ankit","Deepak","Divya","Gaurav","Harsh","Ishaan","Kavya","Manish","Megha","Neha","Nikhil","Pooja","Prateek","Priya","Rahul","Riya","Rohan","Rohit","Sakshi","Sameer","Siddharth","Sneha","Suraj","Tanvi","Varun","Vikas","Vikram","Yash","Kiran","Shweta","Arjun","Sanjay","Prakash","Sunita","Ravi","Geeta"];
+      const lastNames=["Sharma","Verma","Gupta","Nair","Patel","Reddy","Rao","Singh","Das","Mishra","Joshi","Kulkarni","Mehta","Chopra","Bhatia","Iyer","Menon","Agarwal","Deshmukh","Pillai"];
+
+      const generatedLeads=[];
+      const generatedLogs=[];
+      const now=new Date();
+
+      for(let i=0;i<leadCount;i++){
+        const fname=firstNames[i%firstNames.length];
+        const lname=lastNames[(i*3)%lastNames.length];
+        const name=`${fname} ${lname}`;
+        const phone=`98${Math.floor(10000000+Math.random()*90000000)}`;
+
+        const daysAgo=(i%4);
+        const callTime=new Date(now.getTime()-(daysAgo*24*60+Math.floor(Math.random()*480)+60)*60*1000);
+
+        const rand=Math.random();
+        let mainDisp="CONNECTED";
+        let subDisp="INTERESTED";
+
+        if(rand<0.42){
+          subDisp="INTERESTED";
+          mainDisp="CONNECTED";
+        }else if(rand<0.68){
+          subDisp="NOT_INTERESTED";
+          mainDisp="CONNECTED";
+        }else if(rand<0.82){
+          subDisp="NO_RESPONSE";
+          mainDisp="NOT_CONNECTED";
+        }else if(rand<0.92){
+          subDisp="BUSY";
+          mainDisp="NOT_CONNECTED";
+        }else if(rand<0.96){
+          subDisp="INVALID_INPUT";
+          mainDisp="CONNECTED";
+        }else{
+          subDisp="CALL_DISCONNECTED";
+          mainDisp="CONNECTED";
+        }
+
+        generatedLeads.push({
+          name,phone,campaign:campName,
+          status:"CALLED_FINAL",attempt_count:1,
+          max_retries:2,retry_after_minutes:30,
+          eligible_at:callTime.toISOString(),
+          created_at:callTime.toISOString(),
+          updated_at:callTime.toISOString(),
+        });
+
+        generatedLogs.push({
+          phone,campaign:campName,
+          main_disposition:mainDisp,
+          sub_disposition:subDisp,
+          logged_at:callTime.toISOString(),
+        });
+      }
+
+      const chunkSize=40;
+      for(let i=0;i<generatedLeads.length;i+=chunkSize){
+        await dbInsert("leads",generatedLeads.slice(i,i+chunkSize));
+        await dbInsert("call_logs",generatedLogs.slice(i,i+chunkSize));
+      }
+
+      showToast(`Generated ${leadCount} demo leads & call logs!`,"success");
+      await checkDemoData();
+      if(onDataChanged)onDataChanged();
+    }catch(e){
+      showToast("Failed to generate demo data: "+(e.message||"error"),"error");
+    }finally{
+      setLoading(false);
+    }
+  }
+
+  async function deleteDemoData(){
+    if(!window.confirm("Are you sure you want to delete all demo IVR data ([DEMO] campaigns, leads, and call logs)?"))return;
+    setLoading(true);
+    try{
+      await Promise.all([
+        dbDelete("call_logs","campaign=like.*DEMO*"),
+        dbDelete("leads","campaign=like.*DEMO*"),
+        dbDelete("campaigns","name=like.*DEMO*"),
+        dbDelete("candidate_updates","campaign=like.*DEMO*"),
+      ]);
+      showToast("All demo IVR data deleted successfully!","success");
+      await checkDemoData();
+      if(onDataChanged)onDataChanged();
+    }catch(e){
+      showToast("Failed to delete demo data: "+(e.message||"error"),"error");
+    }finally{
+      setLoading(false);
+    }
+  }
+
+  const hasDemoData=demoCampaignCount>0||demoLeadsCount>0||demoLogsCount>0;
+
+  return(
+    <div className="card">
+      <div className="card-header">
+        <div>
+          <div className="card-title">Demo IVR Data Manager</div>
+          <div className="card-sub" style={{color:T.muted,fontSize:13,marginTop:2}}>Generate realistic IVR calls and leads for reviews and presentations, and delete them anytime with 1 click.</div>
+        </div>
+        <button className="btn btn-sm btn-ghost" onClick={checkDemoData}>↻ Refresh Status</button>
+      </div>
+      <div className="card-body" style={{padding:20}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:20}}>
+          <div className="kpi-card">
+            <div className="kpi-label">Demo Campaigns</div>
+            <div className="kpi-value" style={{color:demoCampaignCount?T.purple:T.muted}}>{demoCampaignCount}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-label">Demo Leads</div>
+            <div className="kpi-value" style={{color:demoLeadsCount?T.green:T.muted}}>{demoLeadsCount}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-label">Demo Call Logs</div>
+            <div className="kpi-value" style={{color:demoLogsCount?T.accent:T.muted}}>{demoLogsCount}</div>
+          </div>
+        </div>
+
+        <div style={{background:T.bg,padding:16,borderRadius:10,border:`1px solid ${T.border}`,marginBottom:20}}>
+          <div style={{fontWeight:600,fontSize:14,marginBottom:12}}>Generate New Demo Dataset</div>
+          <div className="two-col" style={{marginBottom:12}}>
+            <div className="field" style={{marginBottom:0}}>
+              <label>Campaign Name</label>
+              <input value={campaignName} onChange={e=>setCampaignName(e.target.value)} placeholder="[DEMO] Voicebot Campaign"/>
+            </div>
+            <div className="field" style={{marginBottom:0}}>
+              <label>Number of Leads & Calls</label>
+              <select value={leadCount} onChange={e=>setLeadCount(Number(e.target.value))}>
+                <option value={25}>25 leads (Quick)</option>
+                <option value={50}>50 leads (Recommended)</option>
+                <option value={100}>100 leads (Comprehensive)</option>
+              </select>
+            </div>
+          </div>
+          <button className="btn btn-sm btn-green" onClick={generateDemoData} disabled={loading}>
+            {loading?"Generating...":"⚡ Generate Demo IVR Data"}
+          </button>
+        </div>
+
+        {hasDemoData&&(
+          <div style={{background:T.mode==="light"?"#FFF5F5":"#2A1518",padding:16,borderRadius:10,border:`1px solid ${T.red}44`,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
+            <div>
+              <div style={{fontWeight:600,fontSize:14,color:T.red}}>Clean Up Demo Data</div>
+              <div style={{fontSize:12,color:T.muted,marginTop:2}}>Permanently delete all [DEMO] campaigns, leads, and call logs to return to a clean state after your review.</div>
+            </div>
+            <button className="btn btn-sm btn-danger" onClick={deleteDemoData} disabled={loading}>
+              {loading?"Deleting...":"🗑️ Delete All Demo IVR Data"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HireFlowSettings({ showToast }) {
   const [tab,setTab]=useState("processes");
-  const tabs=[["processes","Processes"],["positions","Position Types"],["companies","Companies"],["sources","Lead Sources"],["reasons","Reasons"],["stages","Funnel Stages"],["dialing","Dialing Settings"],["queue","IVR Queue"]];
+  const tabs=[["processes","Processes"],["positions","Position Types"],["companies","Companies"],["sources","Lead Sources"],["reasons","Reasons"],["stages","Funnel Stages"],["dialing","Dialing Settings"],["queue","IVR Queue"],["demo","⚡ Demo Data"]];
   return(
     <div>
       <div className="page-header"><div><div className="page-title">Settings</div><div className="page-sub">Manage the lookup lists used across the hiring funnel</div></div></div>
@@ -2982,6 +3190,7 @@ function HireFlowSettings({ showToast }) {
         {tab==="stages"&&<FunnelStagesAdmin showToast={showToast}/>}
         {tab==="dialing"&&<DialingSettings showToast={showToast}/>}
         {tab==="queue"&&<IVRQueue showToast={showToast}/>}
+        {tab==="demo"&&<DemoIVRManager showToast={showToast}/>}
       </div>
     </div>
   );
