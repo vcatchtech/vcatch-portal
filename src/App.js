@@ -3219,6 +3219,8 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
   const [attemptRemark,setAttemptRemark]=useState("");
   const [attemptDate,setAttemptDate]=useState(today());
   const [stageEffectiveDate,setStageEffectiveDate]=useState(today());
+  const [alsoLogAttempt,setAlsoLogAttempt]=useState(false);
+  const [attemptCountToLog,setAttemptCountToLog]=useState(1);
   const [reassignTo,setReassignTo]=useState("");
   const [handoffNote,setHandoffNote]=useState("");
   const [sendingToIvr,setSendingToIvr]=useState(false);
@@ -3318,6 +3320,18 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
         changed_by:myUserId,
         changed_at:eventIso,
       });
+      if(alsoLogAttempt){
+        const attemptActivities=[];
+        for(let i=0; i<attemptCountToLog; i++){
+          attemptActivities.push({
+            candidate_id:candidate.id,type:"CALL_ATTEMPT",is_contact_attempt:true,
+            remark:`Contact attempt on ${stageEffectiveDate||today()}`,
+            changed_by:candidate.assigned_to||myUserId,
+            changed_at:eventIso,
+          });
+        }
+        await dbInsert("candidate_activity",attemptActivities);
+      }
       if(newStageIsHired&&openingChoice==="existing"){
         const [result]=await dbRpc("link_candidate_to_opening",{p_candidate_id:candidate.id,p_opening_id:selectedOpeningId,p_actor:myUserId});
         showToast(result?.closed?"Stage updated — target headcount reached, position auto-closed":"Stage updated — linked","success");
@@ -3536,9 +3550,26 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
           {(newStageNeedsReason||newStageIsInterview||newStageIsHired)&&(
             <div className="field" style={{marginBottom:8}}><label>Additional Note (optional)</label><input value={stageRemark} onChange={e=>setStageRemark(e.target.value)} placeholder="Any extra detail"/></div>
           )}
-          <div className="field" style={{marginBottom:10}}>
+          <div className="field" style={{marginBottom:6}}>
             <label>{newStageIsHired?"Hire Date (supports past dates)":stageMap[newStage]?.is_exit_stage?"Concluded / Exit Date":"Effective Date"}</label>
-            <input type="date" value={stageEffectiveDate} onChange={e=>setStageEffectiveDate(e.target.value)} style={{maxWidth:200}}/>
+            <input type="date" value={stageEffectiveDate} onChange={e=>{setStageEffectiveDate(e.target.value);setAttemptDate(e.target.value);}} style={{maxWidth:200}}/>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,fontSize:13}}>
+            <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",margin:0}}>
+              <input type="checkbox" checked={alsoLogAttempt} onChange={e=>setAlsoLogAttempt(e.target.checked)}/>
+              Also log contact attempt(s) on this date
+            </label>
+            {alsoLogAttempt&&(
+              <input
+                type="number"
+                min="1"
+                max="20"
+                value={attemptCountToLog}
+                onChange={e=>setAttemptCountToLog(Math.max(1,parseInt(e.target.value)||1))}
+                style={{width:60,padding:"2px 6px"}}
+                title="Number of attempts to log on this date"
+              />
+            )}
           </div>
           <button className="btn btn-sm" onClick={changeStage} disabled={busy}>Update Stage</button>
         </div>
@@ -4107,7 +4138,7 @@ function HireFlowCandidates({ showToast }) {
       const activities=[];
       if(inserted && inserted.length){
         inserted.forEach(c=>{
-          const candDate = c.created_at || new Date().toISOString();
+          const candDate = hireDateByPhone[c.phone] || c.created_at || new Date().toISOString();
           if(c.assigned_to){
             activities.push({
               candidate_id:c.id,type:"ASSIGNMENT",is_contact_attempt:false,
