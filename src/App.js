@@ -3008,6 +3008,7 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
   const [rejectionReasonId,setRejectionReasonId]=useState("");
   const [interviewAt,setInterviewAt]=useState("");
   const [attemptRemark,setAttemptRemark]=useState("");
+  const [stageEffectiveDate,setStageEffectiveDate]=useState(today());
   const [reassignTo,setReassignTo]=useState("");
   const [handoffNote,setHandoffNote]=useState("");
   const [sendingToIvr,setSendingToIvr]=useState(false);
@@ -3099,11 +3100,13 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
       const openingNote=newStageIsHired&&openingChoice==="existing"?`Fills opening: ${openingLabel(openOpenings.find(o=>o.id===selectedOpeningId))}`:
         newStageIsHired&&openingChoice==="new"?`Opens new position: ${companyMap[newOpeningCompanyId]} / ${processMap[newOpeningProcessId]} / ${positionMap[newOpeningPositionId]}`:null;
       const remarkParts=[reasonLabel||interviewLabel||openingNote,stageRemark.trim()].filter(Boolean);
+      const eventIso=stageEffectiveDate?new Date(stageEffectiveDate+"T12:00:00Z").toISOString():new Date().toISOString();
       await dbInsert("candidate_activity",{
         candidate_id:candidate.id,type:"STAGE_CHANGE",is_contact_attempt:false,
         from_stage_id:candidate.current_stage_id,to_stage_id:newStage,
         remark:remarkParts.length?remarkParts.join(" — "):null,
         changed_by:myUserId,
+        changed_at:eventIso,
       });
       if(newStageIsHired&&openingChoice==="existing"){
         const [result]=await dbRpc("link_candidate_to_opening",{p_candidate_id:candidate.id,p_opening_id:selectedOpeningId,p_actor:myUserId});
@@ -3320,6 +3323,10 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
           {(newStageNeedsReason||newStageIsInterview||newStageIsHired)&&(
             <div className="field" style={{marginBottom:8}}><label>Additional Note (optional)</label><input value={stageRemark} onChange={e=>setStageRemark(e.target.value)} placeholder="Any extra detail"/></div>
           )}
+          <div className="field" style={{marginBottom:10}}>
+            <label>{newStageIsHired?"Hire Date (supports past dates)":stageMap[newStage]?.is_exit_stage?"Concluded / Exit Date":"Effective Date"}</label>
+            <input type="date" value={stageEffectiveDate} onChange={e=>setStageEffectiveDate(e.target.value)} style={{maxWidth:200}}/>
+          </div>
           <button className="btn btn-sm" onClick={changeStage} disabled={busy}>Update Stage</button>
         </div>
       </div>
@@ -3513,6 +3520,9 @@ function HireFlowCandidates({ showToast }) {
 
   const [pageTab,setPageTab]=useState("pipeline");
   const [hiredDateMap,setHiredDateMap]=useState({});
+  const [concludeActivityMap,setConcludeActivityMap]=useState({});
+  const [editingConcludedDateId,setEditingConcludedDateId]=useState(null);
+  const [editingConcludedDateValue,setEditingConcludedDateValue]=useState("");
   const [concludedSearch,setConcludedSearch]=useState("");
   const [concludedStageFilter,setConcludedStageFilter]=useState("");
   const [hiredProcessFilter,setHiredProcessFilter]=useState("");
@@ -3558,10 +3568,17 @@ function HireFlowCandidates({ showToast }) {
 
       const exitStageIds=stages.filter(s=>s.is_exit_stage).map(s=>s.id);
       if(exitStageIds.length){
-        const concludeEvents=await dbSelect("candidate_activity",`?select=candidate_id,changed_at&type=eq.STAGE_CHANGE&to_stage_id=in.(${exitStageIds.join(",")})&order=changed_at.desc`);
+        const concludeEvents=await dbSelect("candidate_activity",`?select=id,candidate_id,changed_at&type=eq.STAGE_CHANGE&to_stage_id=in.(${exitStageIds.join(",")})&order=changed_at.desc`);
         const dateMap={};
-        concludeEvents.forEach(e=>{if(!dateMap[e.candidate_id])dateMap[e.candidate_id]=e.changed_at;});
+        const actMap={};
+        concludeEvents.forEach(e=>{
+          if(!dateMap[e.candidate_id]){
+            dateMap[e.candidate_id]=e.changed_at;
+            actMap[e.candidate_id]=e.id;
+          }
+        });
         setHiredDateMap(dateMap);
+        setConcludeActivityMap(actMap);
       }
     }catch(e){showToast("Failed to load candidates","error");}
     finally{setLoading(false);}
@@ -3618,6 +3635,25 @@ function HireFlowCandidates({ showToast }) {
       ];
     });
     downloadCSV(`concluded_cases_${today()}.csv`,headers,rows);
+  }
+
+  async function saveConcludedDate(c){
+    if(!editingConcludedDateValue){setEditingConcludedDateId(null);return;}
+    try{
+      const actId=concludeActivityMap[c.id];
+      const newIso=new Date(editingConcludedDateValue+"T12:00:00Z").toISOString();
+      if(actId){
+        await dbUpdate("candidate_activity",`id=eq.${actId}`,{changed_at:newIso});
+      }else{
+        await dbInsert("candidate_activity",{
+          candidate_id:c.id,type:"STAGE_CHANGE",to_stage_id:c.current_stage_id,
+          changed_by:myUserId,changed_at:newIso,is_contact_attempt:false
+        });
+      }
+      showToast("Concluded date updated","success");
+      setEditingConcludedDateId(null);
+      loadAll();
+    }catch{showToast("Failed to update date","error");}
   }
 
   function isStale(c){
@@ -4004,7 +4040,34 @@ function HireFlowCandidates({ showToast }) {
                         <td>{positionMap[c.position_type_id]||"—"}</td>
                         <td><span className="badge" style={{background:`${T.purple}22`,color:T.purple}}>{stage?.name||"—"}</span></td>
                         <td>{owner?(owner.name||owner.email):"Unassigned"}</td>
-                        <td>{hiredDateMap[c.id]?new Date(hiredDateMap[c.id]).toLocaleDateString("en-IN"):"—"}</td>
+                        <td onClick={e=>e.stopPropagation()}>
+                          {editingConcludedDateId===c.id?(
+                            <div className="date-edit-form" onClick={e=>e.stopPropagation()}>
+                              <input type="date" value={editingConcludedDateValue} onChange={e=>setEditingConcludedDateValue(e.target.value)} autoFocus/>
+                              <button className="icon-btn icon-btn-confirm" title="Save" onClick={()=>saveConcludedDate(c)}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                              </button>
+                              <button className="icon-btn icon-btn-cancel" title="Cancel" onClick={()=>setEditingConcludedDateId(null)}>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                              </button>
+                            </div>
+                          ):(
+                            <span
+                              className="date-edit"
+                              title="Click to change concluded/hire date"
+                              onClick={e=>{
+                                e.stopPropagation();
+                                setEditingConcludedDateId(c.id);
+                                setEditingConcludedDateValue(hiredDateMap[c.id]?new Date(hiredDateMap[c.id]).toISOString().split("T")[0]:today());
+                              }}
+                            >
+                              {hiredDateMap[c.id]?new Date(hiredDateMap[c.id]).toLocaleDateString("en-IN"):"—"}
+                              <span className="pencil">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                              </span>
+                            </span>
+                          )}
+                        </td>
                         <td>{c.filled_opening_id?"✓ Linked":"—"}</td>
                         <td>{ivrCount}x</td>
                         <td onClick={e=>e.stopPropagation()}>
