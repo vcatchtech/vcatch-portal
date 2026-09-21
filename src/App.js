@@ -3210,7 +3210,7 @@ function CandidateModal({ candidate, companies, processes, positionTypes, leadSo
   const [saving,setSaving]=useState(false);
   const [showDetails,setShowDetails]=useState(false);
   const [activity,setActivity]=useState([]);
-  const [newStage,setNewStage]=useState(candidate.current_stage_id||"");
+  const [newStage,setNewStage]=useState(candidate.current_stage_id||funnelStages[0]?.id||"");
   const [stageRemark,setStageRemark]=useState("");
   const [remarkText,setRemarkText]=useState(candidate.remark||"");
   const [savingRemark,setSavingRemark]=useState(false);
