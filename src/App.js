@@ -3046,7 +3046,16 @@ function DemoIVRManager({ showToast, onDataChanged }) {
       let phoneCounter = 9845100000 + Math.floor(Math.random() * 10000);
 
       dayList.forEach((dayStr, dIdx) => {
-        const callsToday = Math.max(5, dailyCalls + ((dIdx * 3) % 7) - 3);
+        // Check day of week (0 is Sunday)
+        const dateObj = new Date(`${dayStr}T12:00:00Z`);
+        const dayOfWeek = dateObj.getUTCDay();
+
+        if(dayOfWeek === 0){
+          // Sunday: 0 voicebot calls
+          return;
+        }
+
+        const callsToday = Math.max(5, Math.floor(dailyCalls * (0.75 + Math.random() * 0.5)));
         for(let c = 0; c < callsToday; c++){
           phoneCounter += Math.floor(Math.random() * 40) + 1;
           const phone = String(phoneCounter).slice(0, 10);
@@ -3106,7 +3115,7 @@ function DemoIVRManager({ showToast, onDataChanged }) {
         await dbInsert("call_logs",generatedLogs.slice(i,i+chunkSize));
       }
 
-      showToast(`Generated ${generatedLogs.length} demo IVR calls across ${dayList.length} days!`, "success");
+      showToast(`Generated ${generatedLogs.length} demo IVR calls across ${dayList.length} days (Sundays skipped)!`, "success");
       await checkDemoData();
       if(onDataChanged)onDataChanged();
     }catch(e){
@@ -3153,12 +3162,53 @@ function DemoIVRManager({ showToast, onDataChanged }) {
       let phoneCounter = 9876000000 + Math.floor(Math.random() * 50000);
 
       dayList.forEach((dayStr, dIdx) => {
-        const candsToday = Math.max(2, hfDailyCandidates + ((dIdx * 2) % 5) - 2);
-        for(let c = 0; c < candsToday; c++){
+        const dateObj = new Date(`${dayStr}T12:00:00Z`);
+        const dayOfWeek = dateObj.getUTCDay(); // 0 = Sunday
+
+        if(dayOfWeek === 0){
+          // Strictly 0 hires and 0 activity on Sundays
+          return;
+        }
+
+        // Mon - Sat: Randomized hires distribution (some days 0, some 1, some 2, rarely 3)
+        const rHire = Math.random();
+        let hiresToday = 0;
+        if(rHire < 0.28){
+          hiresToday = 0; // ~28% chance of 0 hires
+        }else if(rHire < 0.68){
+          hiresToday = 1; // ~40% chance of 1 hire
+        }else if(rHire < 0.92){
+          hiresToday = 2; // ~24% chance of 2 hires
+        }else{
+          hiresToday = 3; // ~8% chance of 3 hires
+        }
+
+        // Additional pipeline candidates for realistic contact attempts and non-hire stages
+        const othersToday = 2 + Math.floor(Math.random() * 3); // 2 to 4 other candidates
+        const totalCandsToday = hiresToday + othersToday;
+
+        const dayCandidates = [];
+        for(let h = 0; h < hiresToday; h++){
+          dayCandidates.push({ isHired: true, targetStage: hiredStage });
+        }
+        for(let o = 0; o < othersToday; o++){
+          const rOther = Math.random();
+          let targetStage = screeningStage;
+          if(rOther < 0.35) targetStage = rejectedStage;
+          else if(rOther < 0.60) targetStage = notIntStage;
+          else if(rOther < 0.85) targetStage = interviewStage;
+          else targetStage = screeningStage;
+          dayCandidates.push({ isHired: false, targetStage });
+        }
+
+        // Shuffle candidate order for the day
+        dayCandidates.sort(() => Math.random() - 0.5);
+
+        dayCandidates.forEach((candMeta, c) => {
           phoneCounter += Math.floor(Math.random() * 50) + 1;
           const phone = String(phoneCounter).slice(0, 10);
-          const fname = firstNames[(dIdx * 4 + c * 9) % firstNames.length];
-          const lname = lastNames[(dIdx * 3 + c * 5) % lastNames.length];
+          const fname = firstNames[(dIdx * 4 + c * 9 + Math.floor(Math.random() * 10)) % firstNames.length];
+          const lname = lastNames[(dIdx * 3 + c * 5 + Math.floor(Math.random() * 10)) % lastNames.length];
           const name = `${fname} ${lname}`;
 
           const assignedUser = hrUsers.length ? hrUsers[(dIdx + c) % hrUsers.length] : null;
@@ -3167,28 +3217,12 @@ function DemoIVRManager({ showToast, onDataChanged }) {
           const position = posTypes.length ? posTypes[(dIdx + c) % posTypes.length] : null;
           const source = sources.length ? sources[(dIdx + c) % sources.length] : null;
 
-          const dateIso = `${dayStr}T11:00:00.000Z`;
+          const hour = 10 + Math.floor((c / Math.max(1, totalCandsToday)) * 7);
+          const minute = Math.floor(Math.random() * 60);
+          const second = Math.floor(Math.random() * 60);
+          const dateIso = new Date(`${dayStr}T${String(hour).padStart(2,"0")}:${String(minute).padStart(2,"0")}:${String(second).padStart(2,"0")}+05:30`).toISOString();
 
-          // Realistic funnel distribution:
-          // ~32% Hired, ~24% Rejected, ~14% Not Interested, ~15% Interview Scheduled, ~15% In Pipeline
-          const rand = Math.random();
-          let targetStage = screeningStage;
-          let isHired = false;
-          let attemptCount = 1 + (c % 3);
-
-          if (rand < 0.32) {
-            targetStage = hiredStage;
-            isHired = true;
-            attemptCount = 2 + (c % 2); // 2-3 attempts before hire
-          } else if (rand < 0.56) {
-            targetStage = rejectedStage;
-          } else if (rand < 0.70) {
-            targetStage = notIntStage;
-          } else if (rand < 0.85) {
-            targetStage = interviewStage;
-          } else {
-            targetStage = screeningStage;
-          }
+          const attemptCount = candMeta.isHired ? (2 + (c % 2)) : (1 + Math.floor(Math.random() * 2));
 
           generatedCandidates.push({
             name: name,
@@ -3197,23 +3231,23 @@ function DemoIVRManager({ showToast, onDataChanged }) {
             process_id: process?.id || null,
             position_type_id: position?.id || null,
             source_id: source?.id || null,
-            current_stage_id: targetStage?.id || null,
+            current_stage_id: candMeta.targetStage?.id || null,
             current_salary: `${15000 + (c % 6) * 2000}`,
             expected_salary: `${18000 + (c % 6) * 2000}`,
             location: "Bangalore",
             languages_spoken: "English, Hindi",
-            remark: isHired ? `[DEMO] Hired on ${dayStr}` : `[DEMO] Contacted on ${dayStr}`,
+            remark: candMeta.isHired ? `[DEMO] Hired on ${dayStr}` : `[DEMO] Contacted on ${dayStr}`,
             uploaded_by: myId,
             assigned_to: assignedUser?.id || myId,
             assigned_at: dateIso,
             created_at: dateIso,
             updated_at: dateIso,
             _attempts: attemptCount,
-            _stage: targetStage,
+            _stage: candMeta.targetStage,
             _dateIso: dateIso,
-            _isHired: isHired,
+            _isHired: candMeta.isHired,
           });
-        }
+        });
       });
 
       const candidatePayload = generatedCandidates.map(c => {
