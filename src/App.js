@@ -607,9 +607,9 @@ function Dashboard({ showToast, role }) {
   async function loadHireFlowSummary(){
     try{
       const [cands,stages,activity]=await Promise.all([
-        dbSelect("candidates","?select=id,current_stage_id,assigned_to,assigned_at,updated_at,created_at"),
+        dbSelect("candidates","?select=id,current_stage_id,assigned_to,assigned_at,updated_at,created_at&limit=50000"),
         dbSelect("funnel_stages","?select=id,name,sort_order,is_exit_stage&order=sort_order"),
-        dbSelect("candidate_activity","?select=candidate_id,type,to_stage_id,changed_at&type=in.(CALL_ATTEMPT,STAGE_CHANGE)"),
+        dbSelect("candidate_activity","?select=candidate_id,type,to_stage_id,changed_at&type=in.(CALL_ATTEMPT,STAGE_CHANGE)&order=changed_at.desc&limit=50000"),
       ]);
       const stageName=Object.fromEntries(stages.map(s=>[s.id,s.name]));
       const hiredId=stages.find(s=>s.name==="Hired")?.id;
@@ -633,7 +633,7 @@ function Dashboard({ showToast, role }) {
       const inRange=iso=>{
         if(!hfDateFrom&&!hfDateTo)return true;
         if(!iso)return false;
-        const d=new Date(iso).toISOString().split("T")[0];
+        const d=hfDayKey(iso);
         if(hfDateFrom&&d<hfDateFrom)return false;
         if(hfDateTo&&d>hfDateTo)return false;
         return true;
@@ -688,11 +688,11 @@ function Dashboard({ showToast, role }) {
 
   async function loadStats(){
     try{
-      let p="?select=sub_disposition,logged_at&limit=5000";
+      let p="?select=sub_disposition,logged_at&order=logged_at.desc&limit=50000";
       if(dateFrom) p+=`&logged_at=gte.${dateFrom}T00:00:00`;
       if(dateTo) p+=`&logged_at=lte.${dateTo}T23:59:59`;
       if(campaignFilter) p+=`&campaign=eq.${encodeURIComponent(campaignFilter)}`;
-      let lp="?select=status";
+      let lp="?select=status&limit=50000";
       if(campaignFilter) lp+=`&campaign=eq.${encodeURIComponent(campaignFilter)}`;
       const [logs,leads]=await Promise.all([dbSelect("call_logs",p),dbSelect("leads",lp)]);
       const byDisp={};
@@ -723,7 +723,14 @@ function Dashboard({ showToast, role }) {
   const connRate=stats?.total?Math.round(((stats.total-stats.notConnected)/stats.total)*100):0;
   const isActive=dialerStatus?.dialer?.is_active;
 
-  function hfDayKey(iso){return new Date(iso).toISOString().split("T")[0];}
+  function hfDayKey(iso){
+    if(!iso) return "";
+    const str = String(iso);
+    if(/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    const d = new Date(str);
+    if(isNaN(d.getTime())) return str.slice(0, 10);
+    return d.toLocaleDateString("en-CA");
+  }
   function hfWeekKey(iso){
     const d=new Date(iso);
     const dow=(d.getUTCDay()+6)%7;
@@ -756,7 +763,7 @@ function Dashboard({ showToast, role }) {
       if(!attemptSeen[k].has(a.candidate_id)){attemptSeen[k].add(a.candidate_id);attemptMap[k]=(attemptMap[k]||0)+1;}
     });
     hfHireEvents.forEach(h=>{const k=hfKeyFn(h.changed_at);hireMap[k]=(hireMap[k]||0)+1;});
-    const capped=hfView==="day"?keys.slice(-7):keys;
+    const capped=(hfView==="day"&&(!hfDateFrom&&!hfDateTo))?keys.slice(-7):keys;
     return capped.map(k=>({key:k,attempted:attemptMap[k]||0,hires:hireMap[k]||0}));
   })();
   function hfFormatLabel(k){
@@ -782,7 +789,7 @@ function Dashboard({ showToast, role }) {
     }
     const callMap={},interestedMap={};
     callLogsRaw.forEach(l=>{const k=ivrKeyFn(l.logged_at);callMap[k]=(callMap[k]||0)+1;if(l.sub_disposition==="INTERESTED")interestedMap[k]=(interestedMap[k]||0)+1;});
-    const capped=ivrView==="day"?keys.slice(-7):keys;
+    const capped=(ivrView==="day"&&(!dateFrom&&!dateTo))?keys.slice(-7):keys;
     return capped.map(k=>({key:k,calls:callMap[k]||0,interested:interestedMap[k]||0}));
   })();
   function ivrFormatLabel(k){
@@ -5078,18 +5085,24 @@ function ResizableTh({ col, widths, setWidths, defaultWidth, children, style }) 
 }
 
 function MiniBarChart({ data, valueKey, color, colorOf, formatLabel }) {
-  const max = Math.max(1, ...data.map(d => d[valueKey]));
+  if(!data || !data.length) return <div style={{padding:20,textAlign:"center",color:T.muted,fontSize:13}}>No trend data available for selected range</div>;
+  const max = Math.max(1, ...data.map(d => Number(d[valueKey]) || 0));
   return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 120, padding: "0 4px" }}>
-      {data.map((d, i) => (
-        <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }} title={`${formatLabel(d.key)}: ${d[valueKey]}`}>
-          <div style={{ fontSize: 10, color: T.muted }}>{d[valueKey] || ""}</div>
-          <div style={{ width: "100%", maxWidth: 24, height: 96, display: "flex", alignItems: "flex-end" }}>
-            <div style={{ width: "100%", height: `${Math.max(2, (d[valueKey] / max) * 96)}px`, background: colorOf?colorOf(d):color, borderRadius: "4px 4px 0 0" }} />
+    <div style={{ display: "flex", alignItems: "flex-end", gap: data.length > 14 ? 4 : 8, height: 130, padding: "0 4px", overflowX: data.length > 14 ? "auto" : "visible" }}>
+      {data.map((d, i) => {
+        const val = Number(d[valueKey]) || 0;
+        const barHeight = val > 0 ? Math.max(8, (val / max) * 90) : 3;
+        const barBg = val > 0 ? (colorOf ? colorOf(d) : color) : (T.mode === "light" ? "#E4E1D8" : "#242938");
+        return (
+          <div key={i} style={{ flex: 1, minWidth: data.length > 14 ? 22 : 16, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }} title={`${formatLabel(d.key)}: ${val}`}>
+            <div style={{ fontSize: 10, color: val > 0 ? T.text : T.muted, fontWeight: val > 0 ? 600 : 400 }}>{val}</div>
+            <div style={{ width: "100%", maxWidth: 26, height: 90, display: "flex", alignItems: "flex-end" }}>
+              <div style={{ width: "100%", height: `${barHeight}px`, background: barBg, borderRadius: "4px 4px 0 0", transition: "height 0.25s ease" }} />
+            </div>
+            <div style={{ fontSize: 9, color: T.muted, whiteSpace: "nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"100%" }}>{formatLabel(d.key)}</div>
           </div>
-          <div style={{ fontSize: 9, color: T.muted, whiteSpace: "nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"100%" }}>{formatLabel(d.key)}</div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
