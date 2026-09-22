@@ -3273,6 +3273,7 @@ function DemoIVRManager({ showToast, onDataChanged }) {
             candidate_id: cand.id,
             type: "CALL_ATTEMPT",
             is_contact_attempt: true,
+            to_stage_id: null,
             remark: `Contact attempt #${a + 1} (${meta._attempts > 1 ? "Discussion" : "Initial screening"})`,
             changed_by: cand.assigned_to || myId,
             changed_at: meta._dateIso,
