@@ -2978,40 +2978,63 @@ function PositionOpenings({ showToast }) {
 
 function DemoIVRManager({ showToast, onDataChanged }) {
   const [loading,setLoading]=useState(false);
+  const [activeTab,setActiveTab]=useState("hireflow"); // "hireflow" | "ivr" | "cleanup"
   const [demoCampaignCount,setDemoCampaignCount]=useState(0);
   const [demoLeadsCount,setDemoLeadsCount]=useState(0);
   const [demoLogsCount,setDemoLogsCount]=useState(0);
+  const [demoCandCount,setDemoCandCount]=useState(0);
+  const [demoHiredCount,setDemoHiredCount]=useState(0);
+  const [demoAttemptCount,setDemoAttemptCount]=useState(0);
+
+  // IVR demo params
   const [campaignName,setCampaignName]=useState("[DEMO] September Voicebot Outreach 2026");
   const [demoDateFrom,setDemoDateFrom]=useState("2026-09-01");
-  const [demoDateTo,setDemoDateTo]=useState("2026-09-19");
+  const [demoDateTo,setDemoDateTo]=useState("2026-09-22");
   const [dailyCalls,setDailyCalls]=useState(20);
+
+  // Hire Flow demo params
+  const [hfDateFrom,setHfDateFrom]=useState("2026-09-01");
+  const [hfDateTo,setHfDateTo]=useState("2026-09-22");
+  const [hfDailyCandidates,setHfDailyCandidates]=useState(6);
 
   useEffect(()=>{checkDemoData();},[]);
 
   async function checkDemoData(){
     try{
-      const [camps,lds,lgs]=await Promise.all([
+      const [camps,lds,lgs,cands]=await Promise.all([
         dbSelect("campaigns","?select=name&name=like.*DEMO*"),
         dbSelect("leads","?select=id&campaign=like.*DEMO*"),
         dbSelect("call_logs","?select=id&campaign=like.*DEMO*"),
+        dbSelect("candidates","?select=id,current_stage_id,remark&remark=like.*DEMO*"),
       ]);
-      setDemoCampaignCount(camps.length);
-      setDemoLeadsCount(lds.length);
-      setDemoLogsCount(lgs.length);
+      setDemoCampaignCount(camps?.length||0);
+      setDemoLeadsCount(lds?.length||0);
+      setDemoLogsCount(lgs?.length||0);
+      setDemoCandCount(cands?.length||0);
+
+      const stages = await dbSelect("funnel_stages","?select=id,name");
+      const hiredId = stages.find(s=>s.name==="Hired")?.id;
+      setDemoHiredCount(cands.filter(c=>c.current_stage_id===hiredId).length);
+
+      if(cands.length){
+        const idList=cands.map(c=>c.id).join(",");
+        const acts=await dbSelect("candidate_activity",`?select=id,type&candidate_id=in.(${idList})&type=eq.CALL_ATTEMPT`);
+        setDemoAttemptCount(acts?.length||0);
+      }else{
+        setDemoAttemptCount(0);
+      }
     }catch{}
   }
 
-  async function generateDemoData(){
+  async function generateIVRDemoData(){
     setLoading(true);
     try{
       const campName=campaignName.trim()||"[DEMO] September Voicebot Outreach 2026";
-      
       const firstNames=["Aarav","Aditi","Amit","Ananya","Ankit","Deepak","Divya","Gaurav","Harsh","Ishaan","Kavya","Manish","Megha","Neha","Nikhil","Pooja","Prateek","Priya","Rahul","Riya","Rohan","Rohit","Sakshi","Sameer","Siddharth","Sneha","Suraj","Tanvi","Varun","Vikas","Vikram","Yash","Kiran","Shweta","Arjun","Sanjay","Prakash","Sunita","Ravi","Geeta","Manjunath","Abhishek","Karthik","Naveen","Ashwin","Swathi","Keerthi","Sandhya","Rashmi","Pavithra"];
       const lastNames=["Sharma","Verma","Gupta","Nair","Patel","Reddy","Rao","Singh","Das","Mishra","Joshi","Kulkarni","Mehta","Chopra","Bhatia","Iyer","Menon","Agarwal","Deshmukh","Pillai","Gowda","Kumar","Shetty","Hegde","Babu"];
 
-      // Calculate days in selected date range
       const start = new Date(demoDateFrom || "2026-09-01");
-      const end = new Date(demoDateTo || "2026-09-19");
+      const end = new Date(demoDateTo || today());
       const dayList = [];
       for(let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)){
         dayList.push(d.toISOString().split("T")[0]);
@@ -3031,7 +3054,6 @@ function DemoIVRManager({ showToast, onDataChanged }) {
           const lname = lastNames[(dIdx * 5 + c * 3) % lastNames.length];
           const name = `${fname} ${lname}`;
 
-          // Spread call times between 09:30 AM and 06:30 PM
           const hour = 9 + Math.floor((c / callsToday) * 9);
           const minute = Math.floor(Math.random() * 60);
           const second = Math.floor(Math.random() * 60);
@@ -3041,25 +3063,12 @@ function DemoIVRManager({ showToast, onDataChanged }) {
           let mainDisp = "CONNECTED";
           let subDisp = "INTERESTED";
 
-          if(rand < 0.42){
-            subDisp = "INTERESTED";
-            mainDisp = "CONNECTED";
-          }else if(rand < 0.70){
-            subDisp = "NOT_INTERESTED";
-            mainDisp = "CONNECTED";
-          }else if(rand < 0.84){
-            subDisp = "NO_RESPONSE";
-            mainDisp = "NOT_CONNECTED";
-          }else if(rand < 0.93){
-            subDisp = "BUSY";
-            mainDisp = "NOT_CONNECTED";
-          }else if(rand < 0.97){
-            subDisp = "INVALID_INPUT";
-            mainDisp = "CONNECTED";
-          }else{
-            subDisp = "CALL_DISCONNECTED";
-            mainDisp = "CONNECTED";
-          }
+          if(rand < 0.42){ subDisp = "INTERESTED"; mainDisp = "CONNECTED"; }
+          else if(rand < 0.70){ subDisp = "NOT_INTERESTED"; mainDisp = "CONNECTED"; }
+          else if(rand < 0.84){ subDisp = "NO_RESPONSE"; mainDisp = "NOT_CONNECTED"; }
+          else if(rand < 0.93){ subDisp = "BUSY"; mainDisp = "NOT_CONNECTED"; }
+          else if(rand < 0.97){ subDisp = "INVALID_INPUT"; mainDisp = "CONNECTED"; }
+          else { subDisp = "CALL_DISCONNECTED"; mainDisp = "CONNECTED"; }
 
           generatedLeads.push({
             name,phone,campaign:campName,
@@ -3097,18 +3106,174 @@ function DemoIVRManager({ showToast, onDataChanged }) {
         await dbInsert("call_logs",generatedLogs.slice(i,i+chunkSize));
       }
 
-      showToast(`Generated ${generatedLogs.length} demo IVR calls across ${dayList.length} days (${demoDateFrom} to ${demoDateTo})!`,"success");
+      showToast(`Generated ${generatedLogs.length} demo IVR calls across ${dayList.length} days!`, "success");
       await checkDemoData();
       if(onDataChanged)onDataChanged();
     }catch(e){
-      showToast("Failed to generate demo data: "+(e.message||"error"),"error");
+      showToast("Failed to generate demo IVR data: "+(e.message||"error"),"error");
     }finally{
       setLoading(false);
     }
   }
 
-  async function deleteDemoData(){
-    if(!window.confirm("Are you sure you want to delete all demo IVR data ([DEMO] campaigns, leads, and call logs)? This will completely clean up the demo data."))return;
+  async function generateHireFlowDemoData(){
+    setLoading(true);
+    try{
+      const [stages, comps, procs, posTypes, sources, usersList] = await Promise.all([
+        dbSelect("funnel_stages", "?select=id,name,is_exit_stage&order=sort_order"),
+        dbSelect("companies", "?select=id,name&is_active=eq.true"),
+        dbSelect("processes", "?select=id,name&is_active=eq.true"),
+        dbSelect("position_types", "?select=id,name&is_active=eq.true"),
+        dbSelect("lead_sources", "?select=id,name&is_active=eq.true"),
+        dbSelect("user_roles", "?select=id,name,email,role"),
+      ]);
+
+      const stageMap = Object.fromEntries(stages.map(s => [s.name, s]));
+      const hiredStage = stageMap["Hired"] || stages.find(s => s.is_exit_stage);
+      const rejectedStage = stageMap["Rejected"] || stages.find(s => s.is_exit_stage);
+      const notIntStage = stageMap["Not Interested"] || stages.find(s => s.is_exit_stage);
+      const interviewStage = stageMap["Interview Scheduled"] || stages[1] || stages[0];
+      const screeningStage = stageMap["Screening"] || stageMap["Contacted"] || stages[0];
+
+      const hrUsers = usersList.filter(u => ["HR", "MANAGER"].includes(u.role));
+      const myId = usersList.find(u => u.email === getEmail())?.id || hrUsers[0]?.id;
+
+      const firstNames = ["Aarav","Aditi","Amit","Ananya","Ankit","Deepak","Divya","Gaurav","Harsh","Ishaan","Kavya","Manish","Megha","Neha","Nikhil","Pooja","Prateek","Priya","Rahul","Riya","Rohan","Rohit","Sakshi","Sameer","Siddharth","Sneha","Suraj","Tanvi","Varun","Vikas","Vikram","Yash","Kiran","Shweta","Arjun","Sanjay","Prakash","Sunita","Ravi","Geeta","Manjunath","Abhishek","Karthik","Naveen","Ashwin","Swathi","Keerthi","Sandhya","Rashmi","Pavithra"];
+      const lastNames = ["Sharma","Verma","Gupta","Nair","Patel","Reddy","Rao","Singh","Das","Mishra","Joshi","Kulkarni","Mehta","Chopra","Bhatia","Iyer","Menon","Agarwal","Deshmukh","Pillai","Gowda","Kumar","Shetty","Hegde","Babu"];
+
+      const start = new Date(hfDateFrom || "2026-09-01");
+      const end = new Date(hfDateTo || today());
+      const dayList = [];
+      for(let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)){
+        dayList.push(d.toISOString().split("T")[0]);
+      }
+      if(!dayList.length) dayList.push(today());
+
+      const generatedCandidates = [];
+      let phoneCounter = 9876000000 + Math.floor(Math.random() * 50000);
+
+      dayList.forEach((dayStr, dIdx) => {
+        const candsToday = Math.max(2, hfDailyCandidates + ((dIdx * 2) % 5) - 2);
+        for(let c = 0; c < candsToday; c++){
+          phoneCounter += Math.floor(Math.random() * 50) + 1;
+          const phone = String(phoneCounter).slice(0, 10);
+          const fname = firstNames[(dIdx * 4 + c * 9) % firstNames.length];
+          const lname = lastNames[(dIdx * 3 + c * 5) % lastNames.length];
+          const name = `${fname} ${lname}`;
+
+          const assignedUser = hrUsers.length ? hrUsers[(dIdx + c) % hrUsers.length] : null;
+          const company = comps.length ? comps[(dIdx + c) % comps.length] : null;
+          const process = procs.length ? procs[(dIdx + c) % procs.length] : null;
+          const position = posTypes.length ? posTypes[(dIdx + c) % posTypes.length] : null;
+          const source = sources.length ? sources[(dIdx + c) % sources.length] : null;
+
+          const dateIso = `${dayStr}T11:00:00.000Z`;
+
+          // Realistic funnel distribution:
+          // ~32% Hired, ~24% Rejected, ~14% Not Interested, ~15% Interview Scheduled, ~15% In Pipeline
+          const rand = Math.random();
+          let targetStage = screeningStage;
+          let isHired = false;
+          let attemptCount = 1 + (c % 3);
+
+          if (rand < 0.32) {
+            targetStage = hiredStage;
+            isHired = true;
+            attemptCount = 2 + (c % 2); // 2-3 attempts before hire
+          } else if (rand < 0.56) {
+            targetStage = rejectedStage;
+          } else if (rand < 0.70) {
+            targetStage = notIntStage;
+          } else if (rand < 0.85) {
+            targetStage = interviewStage;
+          } else {
+            targetStage = screeningStage;
+          }
+
+          generatedCandidates.push({
+            name: name,
+            phone: phone,
+            company_id: company?.id || null,
+            process_id: process?.id || null,
+            position_type_id: position?.id || null,
+            source_id: source?.id || null,
+            current_stage_id: targetStage?.id || null,
+            current_salary: `${15000 + (c % 6) * 2000}`,
+            expected_salary: `${18000 + (c % 6) * 2000}`,
+            location: "Bangalore",
+            languages_spoken: "English, Hindi",
+            remark: isHired ? `[DEMO] Hired on ${dayStr}` : `[DEMO] Contacted on ${dayStr}`,
+            uploaded_by: myId,
+            assigned_to: assignedUser?.id || myId,
+            assigned_at: dateIso,
+            created_at: dateIso,
+            updated_at: dateIso,
+            _attempts: attemptCount,
+            _stage: targetStage,
+            _dateIso: dateIso,
+            _isHired: isHired,
+          });
+        }
+      });
+
+      const candidatePayload = generatedCandidates.map(c => {
+        const { _attempts, _stage, _dateIso, _isHired, ...rest } = c;
+        return rest;
+      });
+
+      const chunkSize = 40;
+      const insertedCandidates = [];
+      for(let i = 0; i < candidatePayload.length; i += chunkSize){
+        const chunk = candidatePayload.slice(i, i + chunkSize);
+        const inserted = await dbInsert("candidates", chunk);
+        if(inserted && inserted.length) insertedCandidates.push(...inserted);
+      }
+
+      const activities = [];
+      insertedCandidates.forEach((cand, idx) => {
+        const meta = generatedCandidates[idx];
+        if(!meta) return;
+
+        for(let a = 0; a < meta._attempts; a++){
+          activities.push({
+            candidate_id: cand.id,
+            type: "CALL_ATTEMPT",
+            is_contact_attempt: true,
+            remark: `Contact attempt #${a + 1} (${meta._attempts > 1 ? "Discussion" : "Initial screening"})`,
+            changed_by: cand.assigned_to || myId,
+            changed_at: meta._dateIso,
+          });
+        }
+
+        if(meta._stage){
+          activities.push({
+            candidate_id: cand.id,
+            type: "STAGE_CHANGE",
+            is_contact_attempt: false,
+            to_stage_id: meta._stage.id,
+            remark: meta._isHired ? `Hired — Process: ${meta.process_id || "Customer Support"}` : `Stage updated to ${meta._stage.name}`,
+            changed_by: cand.assigned_to || myId,
+            changed_at: meta._dateIso,
+          });
+        }
+      });
+
+      for(let i = 0; i < activities.length; i += chunkSize){
+        await dbInsert("candidate_activity", activities.slice(i, i + chunkSize));
+      }
+
+      showToast(`Generated ${insertedCandidates.length} demo candidates with ${activities.length} attempt & hiring events across ${dayList.length} days!`, "success");
+      await checkDemoData();
+      if(onDataChanged) onDataChanged();
+    }catch(e){
+      showToast("Failed to generate HireFlow demo data: "+(e.message||"error"),"error");
+    }finally{
+      setLoading(false);
+    }
+  }
+
+  async function deleteIVRDemoData(){
+    if(!window.confirm("Are you sure you want to delete all demo IVR data ([DEMO] campaigns, leads, and call logs)?"))return;
     setLoading(true);
     try{
       await Promise.all([
@@ -3117,81 +3282,194 @@ function DemoIVRManager({ showToast, onDataChanged }) {
         dbDelete("campaigns","name=like.*DEMO*"),
         dbDelete("candidate_updates","campaign=like.*DEMO*"),
       ]);
-      showToast("All demo IVR data deleted successfully!","success");
+      showToast("All demo IVR data deleted!","success");
       await checkDemoData();
       if(onDataChanged)onDataChanged();
     }catch(e){
-      showToast("Failed to delete demo data: "+(e.message||"error"),"error");
+      showToast("Failed to delete demo IVR data: "+(e.message||"error"),"error");
     }finally{
       setLoading(false);
     }
   }
 
-  const hasDemoData=demoCampaignCount>0||demoLeadsCount>0||demoLogsCount>0;
+  async function deleteHireFlowDemoData(){
+    if(!window.confirm("Are you sure you want to delete all demo Hire Flow candidates, attempts, and hires? All entries tagged with [DEMO] will be deleted.")) return;
+    setLoading(true);
+    try{
+      const demoCands = await dbSelect("candidates", "?select=id&remark=like.*DEMO*");
+      if(demoCands && demoCands.length){
+        const idList = demoCands.map(c => c.id).join(",");
+        await dbDelete("candidate_activity", `candidate_id=in.(${idList})`);
+        await dbDelete("candidates", `id=in.(${idList})`);
+      }
+      showToast(`Deleted ${demoCands?.length||0} demo candidates and all associated activities!`, "success");
+      await checkDemoData();
+      if(onDataChanged) onDataChanged();
+    }catch(e){
+      showToast("Failed to delete demo candidates: "+(e.message||"error"),"error");
+    }finally{
+      setLoading(false);
+    }
+  }
+
+  async function deleteAllDemoData(){
+    if(!window.confirm("Are you sure you want to permanently delete ALL demo data (both IVR and Hire Flow)? This will leave only real production data.")) return;
+    setLoading(true);
+    try{
+      const [demoCands] = await Promise.all([
+        dbSelect("candidates", "?select=id&remark=like.*DEMO*"),
+        dbDelete("call_logs","campaign=like.*DEMO*"),
+        dbDelete("leads","campaign=like.*DEMO*"),
+        dbDelete("campaigns","name=like.*DEMO*"),
+        dbDelete("candidate_updates","campaign=like.*DEMO*"),
+      ]);
+      if(demoCands && demoCands.length){
+        const idList = demoCands.map(c => c.id).join(",");
+        await dbDelete("candidate_activity", `candidate_id=in.(${idList})`);
+        await dbDelete("candidates", `id=in.(${idList})`);
+      }
+      showToast("All demo data (IVR & Hire Flow) cleaned up successfully!","success");
+      await checkDemoData();
+      if(onDataChanged)onDataChanged();
+    }catch(e){
+      showToast("Failed to clean up demo data: "+(e.message||"error"),"error");
+    }finally{
+      setLoading(false);
+    }
+  }
+
+  const hasAnyDemoData = demoCampaignCount>0 || demoLeadsCount>0 || demoLogsCount>0 || demoCandCount>0;
 
   return(
     <div className="card">
       <div className="card-header">
         <div>
-          <div className="card-title">Demo IVR Data Manager</div>
-          <div className="card-sub" style={{color:T.muted,fontSize:13,marginTop:2}}>Generate realistic IVR calls and leads for reviews and presentations, and delete them anytime with 1 click.</div>
+          <div className="card-title">Demo Data Manager</div>
+          <div className="card-sub" style={{color:T.muted,fontSize:13,marginTop:2}}>Generate realistic Attempt, Hiring, and IVR trend data for reviews, and delete everything in 1 click after tomorrow.</div>
         </div>
         <button className="btn btn-sm btn-ghost" onClick={checkDemoData}>↻ Refresh Status</button>
       </div>
       <div className="card-body" style={{padding:20}}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:20}}>
+        {/* Status KPI Summary */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:20}}>
           <div className="kpi-card">
-            <div className="kpi-label">Demo Campaigns</div>
-            <div className="kpi-value" style={{color:demoCampaignCount?T.purple:T.muted}}>{demoCampaignCount}</div>
+            <div className="kpi-label">Demo Candidates</div>
+            <div className="kpi-value" style={{color:demoCandCount?T.accent:T.muted}}>{demoCandCount}</div>
+            <div className="kpi-sub">{demoHiredCount} Hired • {demoAttemptCount} Attempts</div>
           </div>
           <div className="kpi-card">
-            <div className="kpi-label">Demo Leads</div>
-            <div className="kpi-value" style={{color:demoLeadsCount?T.green:T.muted}}>{demoLeadsCount}</div>
-          </div>
-          <div className="kpi-card">
-            <div className="kpi-label">Demo Call Logs</div>
-            <div className="kpi-value" style={{color:demoLogsCount?T.accent:T.muted}}>{demoLogsCount}</div>
+            <div className="kpi-label">Demo IVR Calls</div>
+            <div className="kpi-value" style={{color:demoLogsCount?T.green:T.muted}}>{demoLogsCount}</div>
+            <div className="kpi-sub">{demoLeadsCount} Leads • {demoCampaignCount} Campaign</div>
           </div>
         </div>
 
-        <div style={{background:T.bg,padding:16,borderRadius:10,border:`1px solid ${T.border}`,marginBottom:20}}>
-          <div style={{fontWeight:600,fontSize:14,marginBottom:12}}>Generate New Demo Dataset</div>
-          <div className="field" style={{marginBottom:10}}>
-            <label>Campaign Name</label>
-            <input value={campaignName} onChange={e=>setCampaignName(e.target.value)} placeholder="[DEMO] September Voicebot Outreach 2026"/>
-          </div>
-          <div className="three-col" style={{marginBottom:14}}>
-            <div className="field" style={{marginBottom:0}}>
-              <label>From Date</label>
-              <input type="date" value={demoDateFrom} onChange={e=>setDemoDateFrom(e.target.value)}/>
-            </div>
-            <div className="field" style={{marginBottom:0}}>
-              <label>To Date</label>
-              <input type="date" value={demoDateTo} onChange={e=>setDemoDateTo(e.target.value)}/>
-            </div>
-            <div className="field" style={{marginBottom:0}}>
-              <label>Avg Calls / Day</label>
-              <select value={dailyCalls} onChange={e=>setDailyCalls(Number(e.target.value))}>
-                <option value={10}>10 calls/day (~190 total)</option>
-                <option value={20}>20 calls/day (~380 total - Recommended)</option>
-                <option value={30}>30 calls/day (~570 total)</option>
-              </select>
-            </div>
-          </div>
-          <button className="btn btn-sm btn-green" onClick={generateDemoData} disabled={loading}>
-            {loading?"Generating...":"⚡ Generate Sep 1 - Sep 19 IVR Data"}
-          </button>
+        {/* Tab switcher */}
+        <div style={{display:"flex",gap:8,marginBottom:18}}>
+          <button className={`btn btn-sm ${activeTab==="hireflow"?"":"btn-ghost"}`} onClick={()=>setActiveTab("hireflow")}>⚡ Hire Flow Trends (Attempts & Hires)</button>
+          <button className={`btn btn-sm ${activeTab==="ivr"?"":"btn-ghost"}`} onClick={()=>setActiveTab("ivr")}>⚡ IVR Calling Trends</button>
+          <button className={`btn btn-sm ${activeTab==="cleanup"?"":"btn-ghost"}`} style={{color:T.red,borderColor:T.red}} onClick={()=>setActiveTab("cleanup")}>🗑️ Clean Up / Delete</button>
         </div>
 
-        {hasDemoData&&(
-          <div style={{background:T.mode==="light"?"#FFF5F5":"#2A1518",padding:16,borderRadius:10,border:`1px solid ${T.red}44`,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
-            <div>
-              <div style={{fontWeight:600,fontSize:14,color:T.red}}>Clean Up Demo Data (After Review)</div>
-              <div style={{fontSize:12,color:T.muted,marginTop:2}}>Permanently delete all [DEMO] campaigns, leads, and call logs to return to a clean state after your review tomorrow.</div>
+        {/* Hire Flow Demo Generator */}
+        {activeTab==="hireflow"&&(
+          <div style={{background:T.bg,padding:18,borderRadius:10,border:`1px solid ${T.border}`,marginBottom:20}}>
+            <div style={{fontWeight:600,fontSize:14,marginBottom:6}}>Generate Hire Flow Attempted &amp; Hiring Trend Data</div>
+            <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Creates candidates, past contact attempts, and hired outcomes distributed across your chosen date range to populate the <strong>Attempted Trend</strong> and <strong>Hiring Trend</strong> graphs.</div>
+            <div className="three-col" style={{marginBottom:14}}>
+              <div className="field" style={{marginBottom:0}}>
+                <label>From Date</label>
+                <input type="date" value={hfDateFrom} onChange={e=>setHfDateFrom(e.target.value)}/>
+              </div>
+              <div className="field" style={{marginBottom:0}}>
+                <label>To Date</label>
+                <input type="date" value={hfDateTo} onChange={e=>setHfDateTo(e.target.value)}/>
+              </div>
+              <div className="field" style={{marginBottom:0}}>
+                <label>Candidates / Day</label>
+                <select value={hfDailyCandidates} onChange={e=>setHfDailyCandidates(Number(e.target.value))}>
+                  <option value={3}>3 / day (~60 total, ~20 hires)</option>
+                  <option value={6}>6 / day (~130 total, ~40 hires - Recommended)</option>
+                  <option value={10}>10 / day (~220 total, ~70 hires)</option>
+                </select>
+              </div>
             </div>
-            <button className="btn btn-sm btn-danger" onClick={deleteDemoData} disabled={loading}>
-              {loading?"Deleting...":"🗑️ Delete All Demo IVR Data"}
+            <button className="btn btn-sm btn-green" onClick={generateHireFlowDemoData} disabled={loading}>
+              {loading?"Generating Hire Flow Data...":"⚡ Generate Attempted & Hiring Trend Data"}
             </button>
+          </div>
+        )}
+
+        {/* IVR Demo Generator */}
+        {activeTab==="ivr"&&(
+          <div style={{background:T.bg,padding:18,borderRadius:10,border:`1px solid ${T.border}`,marginBottom:20}}>
+            <div style={{fontWeight:600,fontSize:14,marginBottom:6}}>Generate IVR Calling &amp; Interested Trend Data</div>
+            <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Populates IVR call logs, connected calls, and interested dispositions across your chosen date range.</div>
+            <div className="field" style={{marginBottom:10}}>
+              <label>Campaign Name</label>
+              <input value={campaignName} onChange={e=>setCampaignName(e.target.value)} placeholder="[DEMO] September Voicebot Outreach 2026"/>
+            </div>
+            <div className="three-col" style={{marginBottom:14}}>
+              <div className="field" style={{marginBottom:0}}>
+                <label>From Date</label>
+                <input type="date" value={demoDateFrom} onChange={e=>setDemoDateFrom(e.target.value)}/>
+              </div>
+              <div className="field" style={{marginBottom:0}}>
+                <label>To Date</label>
+                <input type="date" value={demoDateTo} onChange={e=>setDemoDateTo(e.target.value)}/>
+              </div>
+              <div className="field" style={{marginBottom:0}}>
+                <label>Avg Calls / Day</label>
+                <select value={dailyCalls} onChange={e=>setDailyCalls(Number(e.target.value))}>
+                  <option value={10}>10 calls/day (~220 total)</option>
+                  <option value={20}>20 calls/day (~440 total - Recommended)</option>
+                  <option value={30}>30 calls/day (~660 total)</option>
+                </select>
+              </div>
+            </div>
+            <button className="btn btn-sm btn-green" onClick={generateIVRDemoData} disabled={loading}>
+              {loading?"Generating IVR Data...":"⚡ Generate IVR Trend Data"}
+            </button>
+          </div>
+        )}
+
+        {/* Clean up / Deletion Section */}
+        {activeTab==="cleanup"&&(
+          <div style={{background:T.mode==="light"?"#FFF5F5":"#2A1518",padding:20,borderRadius:10,border:`1px solid ${T.red}44`}}>
+            <div style={{fontWeight:700,fontSize:15,color:T.red,marginBottom:4}}>Clean Up Demo Data (After Tomorrow's Review)</div>
+            <div style={{fontSize:13,color:T.muted,marginBottom:18}}>Easily delete demo data with 1 click after your review is over. Real production candidates and calls will remain 100% untouched.</div>
+            
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card,padding:12,borderRadius:8,border:`1px solid ${T.border}`}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:13}}>Delete Hire Flow Demo Candidates &amp; Activities</div>
+                  <div style={{fontSize:12,color:T.muted}}>Removes all {demoCandCount} demo candidates, {demoAttemptCount} attempt logs, and {demoHiredCount} hire logs.</div>
+                </div>
+                <button className="btn btn-sm btn-danger" onClick={deleteHireFlowDemoData} disabled={loading||demoCandCount===0}>
+                  Delete HireFlow Demo Data
+                </button>
+              </div>
+
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card,padding:12,borderRadius:8,border:`1px solid ${T.border}`}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:13}}>Delete IVR Demo Calls &amp; Campaigns</div>
+                  <div style={{fontSize:12,color:T.muted}}>Removes all {demoLogsCount} demo call logs, {demoLeadsCount} leads, and {demoCampaignCount} demo campaigns.</div>
+                </div>
+                <button className="btn btn-sm btn-danger" onClick={deleteIVRDemoData} disabled={loading||demoLogsCount===0}>
+                  Delete IVR Demo Data
+                </button>
+              </div>
+
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.mode==="light"?"#FDE8E8":"#3B1416",padding:14,borderRadius:8,border:`1.5px solid ${T.red}`}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:14,color:T.red}}>Delete ALL Demo Data (Master Teardown)</div>
+                  <div style={{fontSize:12,color:T.muted}}>Wipes both Hire Flow and IVR demo datasets in one click.</div>
+                </div>
+                <button className="btn btn-sm btn-danger" onClick={deleteAllDemoData} disabled={loading||!hasAnyDemoData} style={{fontWeight:700}}>
+                  🗑️ Master Teardown
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -3786,6 +4064,7 @@ function HireFlowCandidates({ showToast }) {
   const pageSize=25;
   const [selected,setSelected]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
+  const [showDemoModal,setShowDemoModal]=useState(false);
   const [addForm,setAddForm]=useState({name:"",phone:"",company_id:"",process_id:"",position_type_id:"",source_id:"",assigned_to:"",languages_spoken:""});
   const [adding,setAdding]=useState(false);
   const [uploading,setUploading]=useState(false);
@@ -4382,6 +4661,7 @@ function HireFlowCandidates({ showToast }) {
               ["name","phone","process","position","stage","company","hire date","assigned to","attempts","current salary","expected salary","location","source","language","remarks","added date"],
               [["Jane Doe","9876543210","Cred","Calling Executive","Hired","VCatch","2026-08-15","hr@vcatch.com","2","18000","22000","Bangalore","Work India","Hindi, English","Imported legacy hire","2026-08-01"]])}>Download Template</button>
             <button className="btn btn-sm btn-ghost" onClick={()=>fileRef.current?.click()} disabled={uploading}>{uploading?"Uploading...":"Upload CSV"}</button>
+            <button className="btn btn-sm btn-ghost" onClick={()=>setShowDemoModal(true)}>⚡ Demo Data</button>
             <button className="btn btn-sm" onClick={()=>setShowAdd(true)}>Add Candidate</button>
           </div>
         )}
@@ -4689,6 +4969,12 @@ function HireFlowCandidates({ showToast }) {
             </div>
           </div>
           <div className="field" style={{marginTop:12}}><label>Languages Spoken</label><input value={addForm.languages_spoken||""} onChange={e=>setAddForm({...addForm,languages_spoken:e.target.value})} placeholder="e.g. Hindi, English"/></div>
+        </Modal>
+      )}
+
+      {showDemoModal&&(
+        <Modal title="Demo Data Manager" onClose={()=>setShowDemoModal(false)}>
+          <DemoIVRManager showToast={showToast} onDataChanged={loadAll}/>
         </Modal>
       )}
     </div>
