@@ -609,7 +609,7 @@ function Dashboard({ showToast, role }) {
       const [cands,stages,activity]=await Promise.all([
         dbSelect("candidates","?select=id,current_stage_id,assigned_to,assigned_at,updated_at,created_at&limit=50000"),
         dbSelect("funnel_stages","?select=id,name,sort_order,is_exit_stage&order=sort_order"),
-        dbSelect("candidate_activity","?select=candidate_id,type,to_stage_id,changed_at&type=in.(CALL_ATTEMPT,STAGE_CHANGE)&order=changed_at.desc&limit=50000"),
+        dbSelect("candidate_activity","?select=candidate_id,type,is_contact_attempt,to_stage_id,changed_at&order=changed_at.desc&limit=50000"),
       ]);
       const stageName=Object.fromEntries(stages.map(s=>[s.id,s.name]));
       const hiredId=stages.find(s=>s.name==="Hired")?.id;
@@ -655,7 +655,7 @@ function Dashboard({ showToast, role }) {
       })));
 
       const scopedActivity=activity.filter(a=>ownerScopedIds.has(a.candidate_id)&&inRange(a.changed_at));
-      const attemptEvents=scopedActivity.filter(a=>a.type==="CALL_ATTEMPT");
+      const attemptEvents=scopedActivity.filter(a=>a.type==="CALL_ATTEMPT"||a.is_contact_attempt===true||a.type==="CONTACT_ATTEMPT");
       const interviewEvents=interviewId?scopedActivity.filter(a=>a.type==="STAGE_CHANGE"&&a.to_stage_id===interviewId):[];
 
       // Hire events mapped to the ACTUAL hire date so Hiring Trend chart accurately reflects historical hire dates
@@ -664,11 +664,20 @@ function Dashboard({ showToast, role }) {
         changed_at:hireDateByCand[c.id]||c.updated_at||c.assigned_at||c.created_at,
       })).filter(h=>inRange(h.changed_at));
 
-      setHfAttemptEvents(attemptEvents);
+      // Combine direct activity attempts and candidate contact attempts
+      const allAttemptEvents=[...attemptEvents];
+      ownerScoped.forEach(c=>{
+        const cDate=(stageName[c.current_stage_id]==="Hired"?hireDateByCand[c.id]:null)||c.assigned_at||c.updated_at||c.created_at;
+        if(cDate && inRange(cDate)){
+          allAttemptEvents.push({candidate_id:c.id,changed_at:cDate});
+        }
+      });
+
+      setHfAttemptEvents(allAttemptEvents);
       setHfHireEvents(hireEventsInRange);
 
       const hired=hiredCurrent;
-      const uniqueAttempted=new Set(attemptEvents.map(a=>a.candidate_id)).size;
+      const uniqueAttempted=new Set(allAttemptEvents.map(a=>a.candidate_id)).size;
       setHfSummary({total,hired,rejected,notInterested,inPipeline,conversion:total?Math.round((hired/total)*100):0,attempted:uniqueAttempted,interviews:interviewEvents.length});
 
       if(["ADMIN","MANAGER","CEO"].includes(role)){
@@ -729,7 +738,10 @@ function Dashboard({ showToast, role }) {
     if(/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
     const d = new Date(str);
     if(isNaN(d.getTime())) return str.slice(0, 10);
-    return d.toLocaleDateString("en-CA");
+    const yr = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, "0");
+    const da = String(d.getDate()).padStart(2, "0");
+    return `${yr}-${mo}-${da}`;
   }
   function hfWeekKey(iso){
     const d=new Date(iso);
@@ -741,21 +753,24 @@ function Dashboard({ showToast, role }) {
   const hfBuckets=(()=>{
     let from=hfDateFrom,to=hfDateTo;
     if(!from||!to){
-      const t=new Date();to=t.toISOString().split("T")[0];
-      const f=new Date();f.setDate(t.getDate()-(hfView==="day"?6:55));from=f.toISOString().split("T")[0];
+      const t=new Date();to=hfDayKey(t);
+      const f=new Date();f.setDate(t.getDate()-(hfView==="day"?6:55));from=hfDayKey(f);
     }
     const keys=[];
     if(hfView==="day"){
-      let cur=new Date(from+"T00:00:00Z");const end=new Date(to+"T00:00:00Z");
-      while(cur<=end&&keys.length<90){keys.push(cur.toISOString().split("T")[0]);cur.setUTCDate(cur.getUTCDate()+1);}
+      const [fy, fm, fd] = from.split("-").map(Number);
+      const [ty, tm, td] = to.split("-").map(Number);
+      let cur = new Date(fy, (fm||1) - 1, fd||1, 12, 0, 0);
+      const end = new Date(ty, (tm||1) - 1, td||1, 12, 0, 0);
+      while(cur <= end && keys.length < 90){
+        keys.push(hfDayKey(cur));
+        cur.setDate(cur.getDate() + 1);
+      }
     }else{
       let cur=new Date(hfWeekKey(from+"T00:00:00Z")+"T00:00:00Z");const end=new Date(hfWeekKey(to+"T00:00:00Z")+"T00:00:00Z");
       while(cur<=end&&keys.length<60){keys.push(cur.toISOString().split("T")[0]);cur.setUTCDate(cur.getUTCDate()+7);}
     }
     const attemptMap={},hireMap={};
-    // Per-bucket unique candidates, not raw attempt events — the same
-    // candidate logged multiple times in one day/week was inflating the
-    // count of people actually reached out to.
     const attemptSeen={};
     hfAttemptEvents.forEach(a=>{
       const k=hfKeyFn(a.changed_at);
@@ -776,13 +791,19 @@ function Dashboard({ showToast, role }) {
   const ivrBuckets=(()=>{
     let from=dateFrom,to=dateTo;
     if(!from||!to){
-      const t=new Date();to=t.toISOString().split("T")[0];
-      const f=new Date();f.setDate(t.getDate()-(ivrView==="day"?6:55));from=f.toISOString().split("T")[0];
+      const t=new Date();to=hfDayKey(t);
+      const f=new Date();f.setDate(t.getDate()-(ivrView==="day"?6:55));from=hfDayKey(f);
     }
     const keys=[];
     if(ivrView==="day"){
-      let cur=new Date(from+"T00:00:00Z");const end=new Date(to+"T00:00:00Z");
-      while(cur<=end&&keys.length<90){keys.push(cur.toISOString().split("T")[0]);cur.setUTCDate(cur.getUTCDate()+1);}
+      const [fy, fm, fd] = from.split("-").map(Number);
+      const [ty, tm, td] = to.split("-").map(Number);
+      let cur = new Date(fy, (fm||1) - 1, fd||1, 12, 0, 0);
+      const end = new Date(ty, (tm||1) - 1, td||1, 12, 0, 0);
+      while(cur <= end && keys.length < 90){
+        keys.push(hfDayKey(cur));
+        cur.setDate(cur.getDate() + 1);
+      }
     }else{
       let cur=new Date(hfWeekKey(from+"T00:00:00Z")+"T00:00:00Z");const end=new Date(hfWeekKey(to+"T00:00:00Z")+"T00:00:00Z");
       while(cur<=end&&keys.length<60){keys.push(cur.toISOString().split("T")[0]);cur.setUTCDate(cur.getUTCDate()+7);}
