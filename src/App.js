@@ -298,14 +298,32 @@ function getRoleName() { try { return JSON.parse(localStorage.getItem("sb_role")
 function isAdmin() { return getRole() === "ADMIN"; }
 function isManager() { return ["ADMIN","MANAGER"].includes(getRole()); }
 
+function normalizeBatchPayload(body){
+  if(!Array.isArray(body) || body.length === 0) return body;
+  const allKeys = Array.from(new Set(body.flatMap(obj => Object.keys(obj || {}))));
+  return body.map(obj => {
+    const full = {};
+    for(const k of allKeys){
+      full[k] = (obj && obj[k] !== undefined) ? obj[k] : null;
+    }
+    return full;
+  });
+}
+
 async function dbSelect(table, params = "") { return supaFetch(`/rest/v1/${table}${params}`, { headers: { Prefer: "return=representation" } }); }
-async function dbInsert(table, body) { return supaFetch(`/rest/v1/${table}`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) }); }
+async function dbInsert(table, body) { 
+  const payload = normalizeBatchPayload(body);
+  return supaFetch(`/rest/v1/${table}`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(payload) }); 
+}
 // A single bulk insert is one all-or-nothing statement — if any row in the
 // batch collides with a unique constraint (e.g. candidates.phone), the
 // WHOLE batch is rejected, including every valid row alongside it. This
 // tells PostgREST to silently skip only the colliding rows and still
 // insert the rest, instead of failing the entire request over one bad row.
-async function dbInsertIgnoreDup(table, body, conflictCol) { return supaFetch(`/rest/v1/${table}?on_conflict=${conflictCol}`, { method: "POST", headers: { Prefer: "return=representation,resolution=ignore-duplicates" }, body: JSON.stringify(body) }); }
+async function dbInsertIgnoreDup(table, body, conflictCol) { 
+  const payload = normalizeBatchPayload(body);
+  return supaFetch(`/rest/v1/${table}?on_conflict=${conflictCol}`, { method: "POST", headers: { Prefer: "return=representation,resolution=ignore-duplicates" }, body: JSON.stringify(payload) }); 
+}
 async function dbUpdate(table, match, body) { return supaFetch(`/rest/v1/${table}?${match}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) }); }
 async function dbDelete(table, match) { return supaFetch(`/rest/v1/${table}?${match}`, { method: "DELETE" }); }
 async function dbRpc(fn, body = {}) { return supaFetch(`/rest/v1/rpc/${fn}`, { method: "POST", body: JSON.stringify(body) }); }
@@ -3250,6 +3268,9 @@ function DemoIVRManager({ showToast, onDataChanged }) {
         });
       });
 
+      const metaByPhone = {};
+      generatedCandidates.forEach(c => { metaByPhone[c.phone] = c; });
+
       const candidatePayload = generatedCandidates.map(c => {
         const { _attempts, _stage, _dateIso, _isHired, ...rest } = c;
         return rest;
@@ -3259,13 +3280,13 @@ function DemoIVRManager({ showToast, onDataChanged }) {
       const insertedCandidates = [];
       for(let i = 0; i < candidatePayload.length; i += chunkSize){
         const chunk = candidatePayload.slice(i, i + chunkSize);
-        const inserted = await dbInsert("candidates", chunk);
+        const inserted = await dbInsertIgnoreDup("candidates", chunk, "phone");
         if(inserted && inserted.length) insertedCandidates.push(...inserted);
       }
 
       const activities = [];
-      insertedCandidates.forEach((cand, idx) => {
-        const meta = generatedCandidates[idx];
+      insertedCandidates.forEach(cand => {
+        const meta = metaByPhone[cand.phone];
         if(!meta) return;
 
         for(let a = 0; a < meta._attempts; a++){
