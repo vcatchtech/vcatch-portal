@@ -310,7 +310,51 @@ function normalizeBatchPayload(body){
   });
 }
 
-async function dbSelect(table, params = "") { return supaFetch(`/rest/v1/${table}${params}`, { headers: { Prefer: "return=representation" } }); }
+async function dbSelect(table, params = "") {
+  let paramStr = params || "";
+  if(paramStr.startsWith("?")) paramStr = paramStr.slice(1);
+
+  // Check if caller specifically asked for a small limit (e.g. limit=1, limit=5, limit=50)
+  const limitMatch = paramStr.match(/(?:^|&)limit=(\d+)(?:&|$)/);
+  const requestedLimit = limitMatch ? parseInt(limitMatch[1], 10) : null;
+
+  // If caller asked for a small limit <= 1000, do standard single request
+  if (requestedLimit !== null && requestedLimit <= 1000) {
+    return supaFetch(`/rest/v1/${table}${params ? (params.startsWith("?") ? params : "?" + params) : ""}`, {
+      headers: { Prefer: "return=representation" }
+    });
+  }
+
+  // Remove existing limit & offset from params to handle pagination cleanly
+  const cleanParams = paramStr
+    .replace(/(?:^|&)limit=\d+/g, "")
+    .replace(/(?:^|&)offset=\d+/g, "")
+    .replace(/^&+/, "")
+    .replace(/&+$/, "")
+    .replace(/&&+/g, "&");
+
+  const pageSize = 1000;
+  const maxTotal = requestedLimit || 100000;
+  let allRows = [];
+  let offset = 0;
+
+  while (allRows.length < maxTotal) {
+    const currentLimit = Math.min(pageSize, maxTotal - allRows.length);
+    const pageQuery = `?${cleanParams ? cleanParams + "&" : ""}limit=${currentLimit}&offset=${offset}`;
+    const rows = await supaFetch(`/rest/v1/${table}${pageQuery}`, {
+      headers: { Prefer: "return=representation" }
+    });
+
+    if (!Array.isArray(rows) || rows.length === 0) break;
+    allRows.push(...rows);
+
+    // If less than currentLimit returned, we reached the end of the table
+    if (rows.length < currentLimit) break;
+    offset += rows.length;
+  }
+
+  return allRows;
+}
 async function dbInsert(table, body) { 
   const payload = normalizeBatchPayload(body);
   return supaFetch(`/rest/v1/${table}`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(payload) }); 
