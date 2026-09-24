@@ -688,11 +688,13 @@ function Dashboard({ showToast, role }) {
         const eventDate = (stageName[c.current_stage_id]==="Hired" ? hireDateByCand[c.id] : null) || c.assigned_at || c.updated_at || c.created_at;
         return inRange(eventDate);
       });
+      const exitStageIds = new Set(stages.filter(s=>s.is_exit_stage).map(s=>s.id));
       const total=scoped.length;
       const hiredCurrent=ownerScoped.filter(c=>stageName[c.current_stage_id]==="Hired" && inRange(hireDateByCand[c.id]||c.updated_at||c.assigned_at||c.created_at)).length;
       const rejected=scoped.filter(c=>stageName[c.current_stage_id]==="Rejected").length;
-      const notInterested=scoped.filter(c=>stageName[c.current_stage_id]==="Not Interested").length;
-      const inPipeline=total-hiredCurrent-rejected-notInterested;
+      const notInterested=scoped.filter(c=>["Not Interested","Not interested","not interested"].includes(stageName[c.current_stage_id])).length;
+      // In Pipeline = All candidates currently in active (non-exit) stages
+      const inPipeline=scoped.filter(c=>!exitStageIds.has(c.current_stage_id)).length;
 
       setHfStageBreakdown(stages.map(s=>({
         key:s.name,count:scoped.filter(c=>c.current_stage_id===s.id).length,color:s.is_exit_stage?T.purple:T.accent,
